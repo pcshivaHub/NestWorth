@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Home Finance",
+    "slug": "home-finance-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "backgroundColor": "#0F1117",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#6C63FF"
+      }
+    },
+    "ios": {
+      "supportsTablet": false
+    }
+  }
+}
