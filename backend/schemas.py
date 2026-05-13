@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from uuid import UUID
-from datetime import date
-from typing import Optional
+from datetime import date, datetime
+from typing import Optional, List
 
 
 # ─────────────────────────────────────────
@@ -16,6 +16,7 @@ class AccountCreate(BaseModel):
 
 class AccountResponse(BaseModel):
     id: UUID
+    user_id: Optional[UUID] = None
     name: str
     type: str
     opening_balance: float
@@ -31,12 +32,14 @@ class AccountResponse(BaseModel):
 class CategoryCreate(BaseModel):
     name: str
     kind: str  # "income" or "expense"
+    budget: Optional[float] = None
 
 
 class CategoryResponse(BaseModel):
     id: UUID
     name: str
     kind: str
+    budget: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -75,10 +78,19 @@ class TransactionResponse(BaseModel):
 # SUMMARY
 # ─────────────────────────────────────────
 
+class CategoryBreakdown(BaseModel):
+    category_id: Optional[str] = None
+    category_name: str
+    amount: float
+    budget: Optional[float] = None
+
+
 class SummaryResponse(BaseModel):
     total_income: float
     total_expense: float
     net: float
+    income_by_category: Optional[List[CategoryBreakdown]] = []
+    expense_by_category: Optional[List[CategoryBreakdown]] = []
 
 
 # ─────────────────────────────────────────
@@ -88,3 +100,177 @@ class SummaryResponse(BaseModel):
 class BalanceResponse(BaseModel):
     account: str
     balance: float
+
+
+# ─────────────────────────────────────────
+# FAMILY
+# ─────────────────────────────────────────
+
+class FamilyCreate(BaseModel):
+    name: str
+
+
+class JoinFamilyRequest(BaseModel):
+    invite_code: str
+
+
+class FamilyMemberResponse(BaseModel):
+    user_id: UUID
+    role: str
+    joined_at: datetime
+    display_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class FamilyResponse(BaseModel):
+    id: UUID
+    name: str
+    invite_code: str
+    created_by: UUID
+    members: List[FamilyMemberResponse] = []
+
+    class Config:
+        from_attributes = True
+
+
+class NewInviteCodeResponse(BaseModel):
+    invite_code: str
+
+
+# ─────────────────────────────────────────
+# REPORTS
+# ─────────────────────────────────────────
+
+class MonthDataPoint(BaseModel):
+    label: str
+    income: float
+    expense: float
+    net: float
+
+
+class MonthSummaryPoint(BaseModel):
+    label: str
+    net: float
+
+
+class TrendResponse(BaseModel):
+    months: List[MonthDataPoint]
+    best_month: Optional[MonthSummaryPoint] = None
+    worst_month: Optional[MonthSummaryPoint] = None
+    avg_net: float
+
+
+class CategoryBreakdownItem(BaseModel):
+    category_id: Optional[str] = None
+    category_name: str
+    amount: float
+    percentage: float
+
+
+class CategoryBreakdownResponse(BaseModel):
+    total_expense: float
+    breakdown: List[CategoryBreakdownItem]
+
+
+class BudgetCategoryItem(BaseModel):
+    category_id: Optional[str] = None
+    category_name: str
+    budget: Optional[float] = None
+    actual: float
+    variance: Optional[float] = None
+    percentage: Optional[float] = None
+
+
+class BudgetVsActualResponse(BaseModel):
+    categories: List[BudgetCategoryItem]
+    over_budget_count: int
+    total_budget: float
+    total_actual: float
+    total_variance: float
+
+
+class NetWorthDataPoint(BaseModel):
+    label: str
+    net_worth: float
+
+
+class NetWorthTrendResponse(BaseModel):
+    months: List[NetWorthDataPoint]
+    current_net_worth: float
+    previous_net_worth: float
+    change: float
+
+
+class FamilyMemberBreakdownItem(BaseModel):
+    user_id: str
+    is_self: bool
+    income: float
+    expense: float
+    net: float
+
+
+class FamilyBreakdownResponse(BaseModel):
+    members: List[FamilyMemberBreakdownItem]
+
+
+# ─────────────────────────────────────────
+# ASSETS
+# ─────────────────────────────────────────
+
+class AssetCreate(BaseModel):
+    name: str
+    asset_type: str
+    purchase_price: Optional[float] = None
+    current_value: float
+    purchase_date: Optional[date] = None
+    notes: Optional[str] = None
+
+
+class AssetValueHistoryItem(BaseModel):
+    value: float
+    recorded_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AssetResponse(BaseModel):
+    id: UUID
+    user_id: Optional[UUID] = None
+    name: str
+    asset_type: str
+    purchase_price: Optional[float] = None
+    current_value: float
+    purchase_date: Optional[date] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    value_history: List[AssetValueHistoryItem] = []
+
+    class Config:
+        from_attributes = True
+
+
+class AssetTypeBreakdown(BaseModel):
+    asset_type: str
+    total_value: float
+    count: int
+
+
+class AssetPortfolioItem(BaseModel):
+    id: str
+    name: str
+    asset_type: str
+    purchase_price: Optional[float] = None
+    current_value: float
+    gain_loss: Optional[float] = None
+    gain_loss_pct: Optional[float] = None
+
+
+class AssetPortfolioResponse(BaseModel):
+    total_value: float
+    total_cost: float
+    total_gain_loss: float
+    by_type: List[AssetTypeBreakdown]
+    assets: List[AssetPortfolioItem]

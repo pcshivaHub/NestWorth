@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { COLORS, FONTS, SPACING } from '../utils/theme';
+import { FONTS, SPACING } from '../utils/theme';
+import { useTheme } from '../context/ThemeContext';
 
 export default function EmptyState({ icon = '📭', message = 'Nothing here yet.' }) {
+  const { colors: C } = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
   return (
     <View style={styles.container}>
       <Text style={styles.icon}>{icon}</Text>
@@ -11,17 +14,8 @@ export default function EmptyState({ icon = '📭', message = 'Nothing here yet.
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: SPACING.xl * 2,
-  },
+const makeStyles = (C) => StyleSheet.create({
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: SPACING.xl * 2 },
   icon: { fontSize: 48, marginBottom: SPACING.md },
-  message: {
-    color: COLORS.textSecondary,
-    fontSize: FONTS.sizes.md,
-    textAlign: 'center',
-  },
+  message: { color: C.textSecondary, fontSize: FONTS.sizes.md, textAlign: 'center' },
 });

@@ -1,13 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View, Text, TextInput, StyleSheet, TouchableOpacity,
   KeyboardAvoidingView, Platform, ScrollView, Alert,
 } from 'react-native';
 import { login } from '../api/auth';
-import { COLORS, FONTS, SPACING, RADIUS } from '../utils/theme';
+import { FONTS, SPACING, RADIUS } from '../utils/theme';
+import { useTheme } from '../context/ThemeContext';
 import Button from '../components/Button';
+import AppLogo from '../components/AppLogo';
 
 export default function LoginScreen({ navigation }) {
+  const { colors: C } = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -16,11 +21,9 @@ export default function LoginScreen({ navigation }) {
   const handleLogin = async () => {
     if (!email.trim()) return Alert.alert('Validation', 'Email is required.');
     if (!password) return Alert.alert('Validation', 'Password is required.');
-
     setLoading(true);
     try {
       await login(email.trim().toLowerCase(), password);
-      // AuthContext listener handles navigation automatically
     } catch (e) {
       Alert.alert('Login Failed', e.message);
     } finally {
@@ -29,20 +32,15 @@ export default function LoginScreen({ navigation }) {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
 
-        {/* Logo / Header */}
         <View style={styles.header}>
-          <Text style={styles.logo}>💰</Text>
-          <Text style={styles.title}>Home Finance</Text>
+          <AppLogo size={90} />
+          <Text style={styles.title}>NestWorth</Text>
           <Text style={styles.subtitle}>Manage your money, your way</Text>
         </View>
 
-        {/* Form */}
         <View style={styles.form}>
           <Text style={styles.formTitle}>Welcome back</Text>
 
@@ -50,7 +48,7 @@ export default function LoginScreen({ navigation }) {
           <TextInput
             style={styles.input}
             placeholder="you@example.com"
-            placeholderTextColor={COLORS.textMuted}
+            placeholderTextColor={C.textMuted}
             keyboardType="email-address"
             autoCapitalize="none"
             value={email}
@@ -62,30 +60,19 @@ export default function LoginScreen({ navigation }) {
             <TextInput
               style={[styles.input, styles.passwordInput]}
               placeholder="••••••••"
-              placeholderTextColor={COLORS.textMuted}
+              placeholderTextColor={C.textMuted}
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
             />
-            <TouchableOpacity
-              style={styles.eyeBtn}
-              onPress={() => setShowPassword(!showPassword)}
-            >
+            <TouchableOpacity style={styles.eyeBtn} onPress={() => setShowPassword(!showPassword)}>
               <Text style={styles.eyeIcon}>{showPassword ? '🙈' : '👁️'}</Text>
             </TouchableOpacity>
           </View>
 
-          <Button
-            title="Sign In"
-            onPress={handleLogin}
-            loading={loading}
-            style={styles.submitBtn}
-          />
+          <Button title="Sign In" onPress={handleLogin} loading={loading} style={styles.submitBtn} />
 
-          <TouchableOpacity
-            style={styles.switchRow}
-            onPress={() => navigation.navigate('Register')}
-          >
+          <TouchableOpacity style={styles.switchRow} onPress={() => navigation.navigate('Register')}>
             <Text style={styles.switchText}>Don't have an account? </Text>
             <Text style={styles.switchLink}>Register</Text>
           </TouchableOpacity>
@@ -95,40 +82,25 @@ export default function LoginScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: COLORS.bg },
+const makeStyles = (C) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: C.bg },
   content: { flexGrow: 1, justifyContent: 'center', padding: SPACING.lg },
-
   header: { alignItems: 'center', marginBottom: SPACING.xl },
-  logo: { fontSize: 56, marginBottom: SPACING.sm },
-  title: { color: COLORS.textPrimary, fontSize: FONTS.sizes.xxl, fontWeight: '800' },
-  subtitle: { color: COLORS.textSecondary, fontSize: FONTS.sizes.md, marginTop: 4 },
-
-  form: {
-    backgroundColor: COLORS.surface, borderRadius: RADIUS.xl,
-    padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border,
-  },
-  formTitle: {
-    color: COLORS.textPrimary, fontSize: FONTS.sizes.xl,
-    fontWeight: '700', marginBottom: SPACING.md,
-  },
-  label: {
-    color: COLORS.textSecondary, fontSize: FONTS.sizes.sm,
-    marginBottom: 6, marginTop: SPACING.sm, fontWeight: '500',
-  },
+  title: { color: C.textPrimary, fontSize: 42, fontWeight: '800', letterSpacing: 1, marginTop: SPACING.md },
+  subtitle: { color: C.textSecondary, fontSize: FONTS.sizes.md, marginTop: 4 },
+  form: { backgroundColor: C.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: C.border },
+  formTitle: { color: C.textPrimary, fontSize: FONTS.sizes.xl, fontWeight: '700', marginBottom: SPACING.md },
+  label: { color: C.textSecondary, fontSize: FONTS.sizes.sm, marginBottom: 6, marginTop: SPACING.sm, fontWeight: '500' },
   input: {
-    backgroundColor: COLORS.surfaceHigh, borderRadius: RADIUS.md,
-    borderWidth: 1, borderColor: COLORS.border,
-    color: COLORS.textPrimary, padding: SPACING.sm + 4,
-    fontSize: FONTS.sizes.md,
+    backgroundColor: C.surfaceHigh, borderRadius: RADIUS.md, borderWidth: 1,
+    borderColor: C.border, color: C.textPrimary, padding: SPACING.sm + 4, fontSize: FONTS.sizes.md,
   },
   passwordRow: { position: 'relative' },
   passwordInput: { paddingRight: 50 },
   eyeBtn: { position: 'absolute', right: 12, top: 12 },
   eyeIcon: { fontSize: 18 },
-
   submitBtn: { marginTop: SPACING.lg },
   switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: SPACING.md },
-  switchText: { color: COLORS.textSecondary, fontSize: FONTS.sizes.sm },
-  switchLink: { color: COLORS.primaryLight, fontSize: FONTS.sizes.sm, fontWeight: '600' },
+  switchText: { color: C.textSecondary, fontSize: FONTS.sizes.sm },
+  switchLink: { color: C.primaryLight, fontSize: FONTS.sizes.sm, fontWeight: '600' },
 });

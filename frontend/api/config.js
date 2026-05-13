@@ -1,9 +1,9 @@
 import axios from 'axios';
+import { supabase } from './supabase';
 
-// 🔧 Change this to your machine's local IP when running on a physical device
-//export const BASE_URL = 'http://192.168.1.100:8000';
- export const BASE_URL = 'http://localhost:8000';
-
+//export const BASE_URL = 'http://localhost:8000';
+export const BASE_URL = 'http://172.18.1.170:8000';
+//export const BASE_URL = 'http://10.127.196.32:8081';
 
 
 const apiClient = axios.create({
@@ -14,13 +14,29 @@ const apiClient = axios.create({
   },
 });
 
-// Request interceptor — useful later for adding auth tokens
+// ✅ Wait for Supabase session before attaching token
+const getValidSession = async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.access_token) return session;
+  const { data: { session: refreshed } } = await supabase.auth.refreshSession();
+  return refreshed;
+};
+
 apiClient.interceptors.request.use(
-  (config) => config,
+  async (config) => {
+    try {
+      const session = await getValidSession();
+      if (session?.access_token) {
+        config.headers.Authorization = `Bearer ${session.access_token}`;
+      }
+    } catch (e) {
+      console.warn('Could not get session:', e.message);
+    }
+    return config;
+  },
   (error) => Promise.reject(error)
 );
 
-// Response interceptor — centralized error handling
 apiClient.interceptors.response.use(
   (response) => response.data,
   (error) => {

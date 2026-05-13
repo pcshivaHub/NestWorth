@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { COLORS, FONTS, RADIUS, SPACING } from '../utils/theme';
+import { FONTS, RADIUS, SPACING } from '../utils/theme';
+import { useTheme } from '../context/ThemeContext';
 
 export default function ErrorBanner({ message, onRetry }) {
+  const { colors: C } = useTheme();
+  const styles = useMemo(() => makeStyles(C), [C]);
   return (
     <View style={styles.container}>
       <Text style={styles.text}>⚠️  {message}</Text>
@@ -15,11 +18,11 @@ export default function ErrorBanner({ message, onRetry }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (C) => StyleSheet.create({
   container: {
-    backgroundColor: '#2D1620',
+    backgroundColor: C.expenseBg,
     borderWidth: 1,
-    borderColor: COLORS.expense,
+    borderColor: C.expense,
     borderRadius: RADIUS.md,
     padding: SPACING.md,
     margin: SPACING.md,
@@ -27,11 +30,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  text: { color: COLORS.expense, fontSize: FONTS.sizes.sm, flex: 1 },
-  retry: {
-    color: COLORS.primary,
-    fontSize: FONTS.sizes.sm,
-    fontWeight: '600',
-    marginLeft: SPACING.sm,
-  },
+  text: { color: C.expense, fontSize: FONTS.sizes.sm, flex: 1 },
+  retry: { color: C.primary, fontSize: FONTS.sizes.sm, fontWeight: '600', marginLeft: SPACING.sm },
 });
