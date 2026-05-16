@@ -1,11 +1,12 @@
 import secrets
 import string
 from calendar import monthrange
+from collections import defaultdict
 from sqlalchemy.orm import Session
-from models import Account, Transaction, Category, Family, FamilyMember, Asset, AssetValueHistory
+from models import Account, Transaction, Category, Family, FamilyMember, Asset, AssetValueHistory, Outstanding, DepositDetail, Transfer
 from schemas import AccountCreate, CategoryCreate, TransactionCreate
 from uuid import UUID
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional, List
 
 
@@ -189,6 +190,14 @@ def get_account(db: Session, account_id: UUID, user_id: str):
     )
 
 
+def _transfer_delta(db: Session, account_id: UUID) -> float:
+    """Net effect of transfers on an account balance (+in, -out)."""
+    from sqlalchemy import func
+    transferred_in  = db.query(func.sum(Transfer.amount)).filter(Transfer.to_account_id   == account_id).scalar() or 0
+    transferred_out = db.query(func.sum(Transfer.amount)).filter(Transfer.from_account_id == account_id).scalar() or 0
+    return float(transferred_in) - float(transferred_out)
+
+
 def get_account_balance(db: Session, account_id: UUID, user_id: str):
     account = get_account(db, account_id, user_id)
     if not account:
@@ -197,12 +206,69 @@ def get_account_balance(db: Session, account_id: UUID, user_id: str):
     txns = db.query(Transaction).filter(Transaction.account_id == account_id).all()
     balance = float(account.opening_balance or 0)
     for t in txns:
-        if t.type == "income":
-            balance += float(t.amount)
-        else:
-            balance -= float(t.amount)
+        balance += float(t.amount) if t.type == "income" else -float(t.amount)
+    balance += _transfer_delta(db, account_id)
 
     return {"account": account.name, "balance": balance}
+
+
+def get_account_balance_history(db: Session, account_id: UUID, user_id: str, months: int = 6):
+    account = get_account(db, account_id, user_id)
+    if not account:
+        return None
+
+    today = date.today()
+    # Start from the first day of (months) months ago
+    start = date(today.year, today.month, 1)
+    for _ in range(months - 1):
+        start = (start.replace(day=1) - timedelta(days=1)).replace(day=1)
+
+    # Balance at start of period: opening + prior transactions + prior transfers
+    prior_txns = (
+        db.query(Transaction)
+        .filter(Transaction.account_id == account_id, Transaction.txn_date < start)
+        .all()
+    )
+    running = float(account.opening_balance or 0)
+    for t in prior_txns:
+        running += float(t.amount) if t.type == "income" else -float(t.amount)
+
+    prior_in  = db.query(Transfer).filter(Transfer.to_account_id   == account_id, Transfer.txn_date < start).all()
+    prior_out = db.query(Transfer).filter(Transfer.from_account_id == account_id, Transfer.txn_date < start).all()
+    for tr in prior_in:
+        running += float(tr.amount)
+    for tr in prior_out:
+        running -= float(tr.amount)
+
+    # Transactions + transfers within the period, grouped by month
+    period_txns = (
+        db.query(Transaction)
+        .filter(Transaction.account_id == account_id, Transaction.txn_date >= start)
+        .all()
+    )
+    monthly_net = defaultdict(float)
+    for t in period_txns:
+        key = (t.txn_date.year, t.txn_date.month)
+        monthly_net[key] += float(t.amount) if t.type == "income" else -float(t.amount)
+
+    period_in  = db.query(Transfer).filter(Transfer.to_account_id   == account_id, Transfer.txn_date >= start).all()
+    period_out = db.query(Transfer).filter(Transfer.from_account_id == account_id, Transfer.txn_date >= start).all()
+    for tr in period_in:
+        monthly_net[(tr.txn_date.year, tr.txn_date.month)] += float(tr.amount)
+    for tr in period_out:
+        monthly_net[(tr.txn_date.year, tr.txn_date.month)] -= float(tr.amount)
+
+    result = []
+    cur = start
+    for _ in range(months):
+        running += monthly_net.get((cur.year, cur.month), 0)
+        result.append({"label": cur.strftime("%b '%y"), "balance": round(running, 2)})
+        if cur.month == 12:
+            cur = cur.replace(year=cur.year + 1, month=1)
+        else:
+            cur = cur.replace(month=cur.month + 1)
+
+    return result
 
 
 def update_account(db: Session, account_id: UUID, data, user_id: str):
@@ -222,6 +288,105 @@ def delete_account(db: Session, account_id: UUID, user_id: str):
     if obj:
         db.delete(obj)
         db.commit()
+
+
+# ─────────────────────────────────────────
+# DEPOSITS (FD / RD)
+# ─────────────────────────────────────────
+
+def _fd_maturity(principal: float, rate: float, months: int) -> float:
+    """Annual compound interest: A = P(1 + r/100)^(months/12)"""
+    return round(principal * ((1 + rate / 100) ** (months / 12)), 0)
+
+
+def _rd_maturity(monthly: float, rate: float, months: int) -> float:
+    """Quarterly compounding: sum each installment compounded for remaining quarters."""
+    r = rate / 400  # quarterly rate
+    total = sum(monthly * ((1 + r) ** ((months - i) / 3)) for i in range(months))
+    return round(total, 0)
+
+
+def _add_months(d: date, months: int) -> date:
+    month = d.month - 1 + months
+    year = d.year + month // 12
+    month = month % 12 + 1
+    day = min(d.day, [31, 29 if year % 4 == 0 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1])
+    return date(year, month, day)
+
+
+def create_deposit_detail(db: Session, account_id: UUID, data, deposit_type: str):
+    start = data.start_date or date.today()
+    maturity_date = data.maturity_date or _add_months(start, data.tenure_months)
+
+    if data.maturity_amount is not None:
+        maturity_amount = data.maturity_amount
+    elif deposit_type == "fd":
+        maturity_amount = _fd_maturity(data.principal_amount, data.interest_rate, data.tenure_months)
+    else:
+        maturity_amount = _rd_maturity(data.monthly_installment or 0, data.interest_rate, data.tenure_months)
+
+    obj = DepositDetail(
+        account_id=account_id,
+        principal_amount=data.principal_amount,
+        monthly_installment=data.monthly_installment,
+        interest_rate=data.interest_rate,
+        tenure_months=data.tenure_months,
+        maturity_amount=maturity_amount,
+        maturity_date=maturity_date,
+        start_date=start,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def get_deposit_detail(db: Session, account_id: UUID):
+    return db.query(DepositDetail).filter(DepositDetail.account_id == account_id).first()
+
+
+def close_deposit(db: Session, account_id: UUID, data, user_id: str):
+    deposit = db.query(DepositDetail).filter(DepositDetail.account_id == account_id).first()
+    if not deposit:
+        raise ValueError("Deposit not found")
+    if deposit.is_closed:
+        raise ValueError("Deposit already closed")
+
+    # Find or create a "Deposit Closure" income category scoped to the user's family
+    family = get_family_for_user(db, user_id)
+    category = db.query(Category).filter(
+        Category.name == "Deposit Closure",
+        Category.kind == "income",
+        Category.family_id == (family.id if family else None),
+    ).first()
+    if not category:
+        category = Category(
+            family_id=family.id if family else None,
+            name="Deposit Closure",
+            kind="income",
+        )
+        db.add(category)
+        db.flush()
+
+    closed_date = data.closed_date or date.today()
+    txn = Transaction(
+        user_id=UUID(user_id),
+        account_id=data.transferred_to_account_id,
+        category_id=category.id,
+        amount=data.closing_amount,
+        type="income",
+        txn_date=closed_date,
+        note="Deposit closure / maturity transfer",
+    )
+    db.add(txn)
+
+    deposit.is_closed = True
+    deposit.closing_amount = data.closing_amount
+    deposit.closed_date = closed_date
+    deposit.transferred_to_account_id = data.transferred_to_account_id
+    db.commit()
+    db.refresh(deposit)
+    return deposit
 
 
 # ─────────────────────────────────────────
@@ -600,6 +765,15 @@ def get_net_worth_trend(db: Session, user_id: str, months: int = 6) -> dict:
     all_txns = db.query(Transaction).filter(Transaction.account_id.in_(account_ids)).all() if account_ids else []
     assets = _get_family_assets(db, user_id)
 
+    outstandings = db.query(Outstanding).filter(
+        Outstanding.user_id.in_(member_ids),
+        Outstanding.is_settled == False,  # noqa: E712
+    ).all()
+    outstanding_net = sum(
+        float(o.amount) if o.direction == "lent" else -float(o.amount)
+        for o in outstandings
+    )
+
     net_worth_points = []
     for (y, m) in slots:
         last_day = date(y, m, monthrange(y, m)[1])
@@ -618,6 +792,7 @@ def get_net_worth_trend(db: Session, user_id: str, months: int = 6) -> dict:
                 nw += float(max(relevant, key=lambda h: h.recorded_at).value)
             elif asset.purchase_price:
                 nw += float(asset.purchase_price)
+        nw += outstanding_net
         net_worth_points.append({"label": date(y, m, 1).strftime("%b %y"), "net_worth": round(nw, 2)})
 
     current = net_worth_points[-1]["net_worth"] if net_worth_points else 0.0
@@ -725,6 +900,264 @@ def delete_asset(db: Session, asset_id: UUID, user_id: str):
     if asset:
         db.delete(asset)
         db.commit()
+
+
+# ─────────────────────────────────────────
+# OUTSTANDINGS
+# ─────────────────────────────────────────
+
+def get_outstandings(db: Session, user_id: str, settled: Optional[bool] = False) -> list:
+    member_ids = [UUID(uid) for uid in get_family_member_ids(db, user_id)]
+    query = db.query(Outstanding).filter(Outstanding.user_id.in_(member_ids))
+    if settled is not None:
+        query = query.filter(Outstanding.is_settled == settled)
+    return query.order_by(Outstanding.created_at.desc()).all()
+
+
+def create_outstanding(db: Session, data, user_id: str):
+    family_id = _get_user_family_id(db, user_id)
+    obj = Outstanding(
+        family_id=family_id,
+        user_id=UUID(user_id),
+        person_name=data.person_name,
+        amount=data.amount,
+        description=data.description,
+        direction=data.direction,
+        due_date=data.due_date,
+        is_settled=False,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def settle_outstanding(db: Session, outstanding_id: UUID, user_id: str):
+    member_ids = [UUID(uid) for uid in get_family_member_ids(db, user_id)]
+    obj = db.query(Outstanding).filter(
+        Outstanding.id == outstanding_id,
+        Outstanding.user_id.in_(member_ids),
+    ).first()
+    if not obj:
+        raise ValueError("Outstanding not found")
+    obj.is_settled = True
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def delete_outstanding(db: Session, outstanding_id: UUID, user_id: str):
+    member_ids = [UUID(uid) for uid in get_family_member_ids(db, user_id)]
+    obj = db.query(Outstanding).filter(
+        Outstanding.id == outstanding_id,
+        Outstanding.user_id.in_(member_ids),
+    ).first()
+    if obj:
+        db.delete(obj)
+        db.commit()
+
+
+BANK_TYPES       = {"savings", "checking", "cash", "credit", "fd", "rd"}
+INVESTMENT_TYPES = {"mutual_fund", "equity", "lic", "ppf", "nps", "investment"}
+BANK_ORDER       = ["savings", "checking", "cash", "credit", "fd", "rd"]
+INVEST_ORDER     = ["mutual_fund", "equity", "lic", "ppf", "nps", "investment"]
+
+
+def get_net_worth_snapshot(db: Session, user_id: str) -> dict:
+    member_ids_str = get_family_member_ids(db, user_id)
+    member_ids = [UUID(uid) for uid in member_ids_str]
+
+    accounts = db.query(Account).filter(Account.user_id.in_(member_ids)).all()
+    account_ids = [a.id for a in accounts]
+    all_txns = (
+        db.query(Transaction).filter(Transaction.account_id.in_(account_ids)).all()
+        if account_ids else []
+    )
+    all_transfers_in  = (
+        db.query(Transfer).filter(Transfer.to_account_id.in_(account_ids)).all()
+        if account_ids else []
+    )
+    all_transfers_out = (
+        db.query(Transfer).filter(Transfer.from_account_id.in_(account_ids)).all()
+        if account_ids else []
+    )
+
+    bank_balances:   dict = defaultdict(float)
+    bank_counts:     dict = defaultdict(int)
+    invest_balances: dict = defaultdict(float)
+    invest_counts:   dict = defaultdict(int)
+
+    for acc in accounts:
+        bal = float(acc.opening_balance or 0)
+        for t in all_txns:
+            if t.account_id == acc.id:
+                bal += float(t.amount) if t.type == "income" else -float(t.amount)
+        for tr in all_transfers_in:
+            if tr.to_account_id == acc.id:
+                bal += float(tr.amount)
+        for tr in all_transfers_out:
+            if tr.from_account_id == acc.id:
+                bal -= float(tr.amount)
+
+        acc_type = acc.type or "other"
+        if acc_type in INVESTMENT_TYPES:
+            invest_balances[acc_type] += bal
+            invest_counts[acc_type] += 1
+        else:
+            bank_balances[acc_type] += bal
+            bank_counts[acc_type] += 1
+
+    def _sort_breakdown(balances, counts, order):
+        keys = sorted(balances.keys(), key=lambda k: (order.index(k) if k in order else len(order), k))
+        return [{"account_type": k, "balance": round(balances[k], 2), "count": counts[k]} for k in keys]
+
+    bank_breakdown   = _sort_breakdown(bank_balances,   bank_counts,   BANK_ORDER)
+    invest_breakdown = _sort_breakdown(invest_balances, invest_counts, INVEST_ORDER)
+
+    actual_in_hand   = round(sum(bank_balances.values()), 2)
+    investment_value = round(sum(invest_balances.values()), 2)
+
+    assets = _get_family_assets(db, user_id)
+    asset_total = round(sum(float(a.current_value) for a in assets), 2)
+
+    outstandings = db.query(Outstanding).filter(
+        Outstanding.user_id.in_(member_ids),
+        Outstanding.is_settled == False,  # noqa: E712
+    ).all()
+    total_lent     = round(sum(float(o.amount) for o in outstandings if o.direction == "lent"), 2)
+    total_borrowed = round(sum(float(o.amount) for o in outstandings if o.direction == "borrowed"), 2)
+    outstanding_net = round(total_lent - total_borrowed, 2)
+
+    grand1 = round(actual_in_hand + outstanding_net, 2)
+    grand2 = round(grand1 + investment_value + asset_total, 2)
+
+    return {
+        "actual_in_hand":           actual_in_hand,
+        "bank_breakdown":           bank_breakdown,
+        "grand1_with_outstandings": grand1,
+        "total_lent":               total_lent,
+        "total_borrowed":           total_borrowed,
+        "outstanding_net":          outstanding_net,
+        "grand2_with_investments":  grand2,
+        "investment_value":         investment_value,
+        "investment_breakdown":     invest_breakdown,
+        "asset_value":              asset_total,
+        # legacy aliases
+        "net_worth":        grand2,
+        "account_balance":  actual_in_hand,
+        "account_breakdown": bank_breakdown,
+    }
+
+
+# ─────────────────────────────────────────
+# TRANSFERS
+# ─────────────────────────────────────────
+
+def create_transfer(db: Session, data, user_id: str):
+    from schemas import TransferCreate
+    tr = Transfer(
+        user_id         = UUID(user_id),
+        from_account_id = data.from_account_id,
+        to_account_id   = data.to_account_id,
+        amount          = data.amount,
+        txn_date        = data.txn_date,
+        note            = data.note,
+    )
+    db.add(tr)
+    db.commit()
+    db.refresh(tr)
+    # enrich with account names
+    from_acc = db.query(Account).filter(Account.id == tr.from_account_id).first()
+    to_acc   = db.query(Account).filter(Account.id == tr.to_account_id).first()
+    return {
+        "id":               tr.id,
+        "user_id":          tr.user_id,
+        "from_account_id":  tr.from_account_id,
+        "to_account_id":    tr.to_account_id,
+        "from_account_name": from_acc.name if from_acc else None,
+        "to_account_name":   to_acc.name   if to_acc   else None,
+        "amount":           float(tr.amount),
+        "txn_date":         tr.txn_date,
+        "note":             tr.note,
+        "created_at":       tr.created_at,
+    }
+
+
+def get_transfers_for_account(db: Session, account_id: UUID, user_id: str):
+    transfers = db.query(Transfer).filter(
+        (Transfer.from_account_id == account_id) | (Transfer.to_account_id == account_id)
+    ).order_by(Transfer.txn_date.desc()).all()
+    result = []
+    for tr in transfers:
+        from_acc = db.query(Account).filter(Account.id == tr.from_account_id).first()
+        to_acc   = db.query(Account).filter(Account.id == tr.to_account_id).first()
+        result.append({
+            "id":               tr.id,
+            "user_id":          tr.user_id,
+            "from_account_id":  tr.from_account_id,
+            "to_account_id":    tr.to_account_id,
+            "from_account_name": from_acc.name if from_acc else None,
+            "to_account_name":   to_acc.name   if to_acc   else None,
+            "amount":           float(tr.amount),
+            "txn_date":         tr.txn_date,
+            "note":             tr.note,
+            "created_at":       tr.created_at,
+        })
+    return result
+
+
+def delete_transfer(db: Session, transfer_id: UUID, user_id: str):
+    tr = db.query(Transfer).filter(Transfer.id == transfer_id, Transfer.user_id == UUID(user_id)).first()
+    if tr:
+        db.delete(tr)
+        db.commit()
+
+
+def get_expense_category_trends(db: Session, user_id: str, months: int = 6) -> dict:
+    member_ids = [UUID(uid) for uid in get_family_member_ids(db, user_id)]
+    family_id = _get_user_family_id(db, user_id)
+    slots = _month_slots(months)
+
+    earliest = date(slots[0][0], slots[0][1], 1)
+    txns = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id.in_(member_ids),
+            Transaction.type == "expense",
+            Transaction.txn_date >= earliest,
+        )
+        .all()
+    )
+
+    categories = (
+        db.query(Category).filter(Category.family_id == family_id, Category.kind == "expense").all()
+        if family_id else []
+    )
+    cat_names = {str(c.id): c.name for c in categories}
+    month_labels = [date(y, m, 1).strftime("%b %y") for (y, m) in slots]
+
+    # Accumulate amounts per (category_id, month_label)
+    data: dict = {}
+    for t in txns:
+        cat_id = str(t.category_id) if t.category_id else "uncategorized"
+        if cat_id not in data:
+            cat_name = cat_names.get(cat_id) or (t.category.name if t.category else "Uncategorized")
+            data[cat_id] = {"category_id": cat_id, "category_name": cat_name, "monthly": {}}
+        label = date(t.txn_date.year, t.txn_date.month, 1).strftime("%b %y")
+        data[cat_id]["monthly"][label] = data[cat_id]["monthly"].get(label, 0.0) + float(t.amount)
+
+    result = []
+    for cat_id, item in data.items():
+        monthly_amounts = [round(item["monthly"].get(lbl, 0.0), 2) for lbl in month_labels]
+        result.append({
+            "category_id": cat_id,
+            "category_name": item["category_name"],
+            "monthly_amounts": monthly_amounts,
+            "total": round(sum(monthly_amounts), 2),
+        })
+
+    result.sort(key=lambda x: -x["total"])
+    return {"month_labels": month_labels, "categories": result}
 
 
 def get_asset_portfolio(db: Session, user_id: str) -> dict:

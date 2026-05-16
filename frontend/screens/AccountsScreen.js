@@ -4,8 +4,9 @@ import {
   TouchableOpacity, Modal, TextInput, Alert, ScrollView,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getAccounts, createAccount, getAccountBalance } from '../api/accounts';
+import { getAccounts, createAccount, getAccountBalance, createDepositDetail, createTransfer } from '../api/accounts';
 import { getAssets, createAsset } from '../api/assets';
+import { getOutstandings, createOutstanding, settleOutstanding, deleteOutstanding } from '../api/outstandings';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { formatCurrency, formatDate } from '../utils/helpers';
@@ -17,8 +18,20 @@ import ErrorBanner from '../components/ErrorBanner';
 import EmptyState from '../components/EmptyState';
 import BankLogo from '../components/BankLogo';
 
-const ACCOUNT_TYPES = ['savings', 'checking', 'cash', 'credit'];
-const TYPE_ICONS = { savings: '🏦', checking: '💳', cash: '💵', credit: '🔖' };
+const ACCOUNT_TYPES = ['savings', 'checking', 'cash', 'credit', 'fd', 'rd', 'mutual_fund', 'equity', 'lic', 'ppf', 'nps'];
+const TYPE_ICONS = {
+  savings: '🏦', checking: '💳', cash: '💵', credit: '🔖', fd: '📅', rd: '🔄',
+  mutual_fund: '📊', equity: '📈', lic: '🛡️', ppf: '🏛️', nps: '🎯',
+};
+const TYPE_LABELS = {
+  savings: 'Savings', checking: 'Checking', cash: 'Cash', credit: 'Credit Card',
+  fd: 'Fixed Deposit', rd: 'Recurring Deposit',
+  mutual_fund: 'Mutual Fund', equity: 'Equity / Stocks', lic: 'LIC Policy',
+  ppf: 'PPF', nps: 'NPS',
+};
+const DEPOSIT_TYPES = ['fd', 'rd'];
+const INVESTMENT_TYPES = ['mutual_fund', 'equity', 'lic', 'ppf', 'nps'];
+const EMPTY_TRANSFER_FORM = { from_account_id: '', to_account_id: '', amount: '', txn_date: '', note: '' };
 
 const ASSET_TYPES = {
   real_estate:   '🏠',
@@ -36,6 +49,10 @@ const EMPTY_ASSET_FORM = {
   current_value: '', purchase_date: '', notes: '',
 };
 
+const EMPTY_OUTSTANDING_FORM = {
+  person_name: '', amount: '', description: '', direction: 'lent', due_date: '',
+};
+
 export default function AccountsScreen({ navigation }) {
   const { colors: C } = useTheme();
   const styles = useMemo(() => makeStyles(C), [C]);
@@ -51,12 +68,23 @@ export default function AccountsScreen({ navigation }) {
   const [balances, setBalances] = useState({});
   const [accountModal, setAccountModal] = useState(false);
   const [accountForm, setAccountForm] = useState({ name: '', type: 'savings', balance: '' });
+  const [depositForm, setDepositForm] = useState({ interest_rate: '', tenure_months: '', monthly_installment: '', maturity_amount: '', start_date: '' });
   const [savingAccount, setSavingAccount] = useState(false);
 
   const [assets, setAssets] = useState([]);
   const [assetModal, setAssetModal] = useState(false);
   const [assetForm, setAssetForm] = useState(EMPTY_ASSET_FORM);
   const [savingAsset, setSavingAsset] = useState(false);
+
+  const [outstandings, setOutstandings] = useState({ total_lent: 0, total_borrowed: 0, net_outstanding: 0, items: [] });
+  const [showSettled, setShowSettled] = useState(false);
+  const [outstandingModal, setOutstandingModal] = useState(false);
+  const [outstandingForm, setOutstandingForm] = useState(EMPTY_OUTSTANDING_FORM);
+  const [savingOutstanding, setSavingOutstanding] = useState(false);
+
+  const [transferModal, setTransferModal] = useState(false);
+  const [transferForm, setTransferForm] = useState(EMPTY_TRANSFER_FORM);
+  const [savingTransfer, setSavingTransfer] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -65,9 +93,12 @@ export default function AccountsScreen({ navigation }) {
   const load = async () => {
     try {
       setError(null);
-      const [list, assetList] = await Promise.all([getAccounts(), getAssets()]);
+      const [list, assetList, outData] = await Promise.all([
+        getAccounts(), getAssets(), getOutstandings(showSettled),
+      ]);
       setAccounts(list || []);
       setAssets(assetList || []);
+      setOutstandings(outData || { total_lent: 0, total_borrowed: 0, net_outstanding: 0, items: [] });
       const bals = await Promise.allSettled(
         (list || []).map((a) => getAccountBalance(a.id).then((r) => ({ id: a.id, balance: r.balance })))
       );
@@ -82,21 +113,109 @@ export default function AccountsScreen({ navigation }) {
     }
   };
 
-  useFocusEffect(useCallback(() => { load(); }, []));
+  useFocusEffect(useCallback(() => { load(); }, [showSettled]));
   const onRefresh = () => { setRefreshing(true); load(); };
+
+  const handleAddOutstanding = async () => {
+    if (!outstandingForm.person_name.trim()) return Alert.alert('Validation', 'Person name is required.');
+    if (!outstandingForm.amount) return Alert.alert('Validation', 'Amount is required.');
+    setSavingOutstanding(true);
+    try {
+      await createOutstanding({
+        person_name: outstandingForm.person_name.trim(),
+        amount: parseFloat(outstandingForm.amount),
+        description: outstandingForm.description.trim() || null,
+        direction: outstandingForm.direction,
+        due_date: outstandingForm.due_date.trim() || null,
+      });
+      setOutstandingModal(false);
+      setOutstandingForm(EMPTY_OUTSTANDING_FORM);
+      load();
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setSavingOutstanding(false);
+    }
+  };
+
+  const handleOutstandingAction = (item) => {
+    const options = item.is_settled
+      ? [{ text: 'Delete', style: 'destructive', onPress: () => confirmDelete(item.id) }]
+      : [
+          { text: 'Mark Settled', onPress: () => confirmSettle(item.id) },
+          { text: 'Delete', style: 'destructive', onPress: () => confirmDelete(item.id) },
+        ];
+    Alert.alert(item.person_name, `${item.direction === 'lent' ? 'Lent to' : 'Borrowed from'} — ${formatCurrency(item.amount)}`, [
+      ...options,
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const confirmSettle = (id) => {
+    settleOutstanding(id).then(load).catch((e) => Alert.alert('Error', e.message));
+  };
+
+  const confirmDelete = (id) => {
+    deleteOutstanding(id).then(load).catch((e) => Alert.alert('Error', e.message));
+  };
 
   const handleAddAccount = async () => {
     if (!accountForm.name.trim()) return Alert.alert('Validation', 'Account name is required.');
+    const isDeposit = DEPOSIT_TYPES.includes(accountForm.type);
+    if (isDeposit) {
+      if (!depositForm.interest_rate) return Alert.alert('Validation', 'Interest rate is required.');
+      if (!depositForm.tenure_months) return Alert.alert('Validation', 'Tenure (months) is required.');
+      if (accountForm.type === 'rd' && !depositForm.monthly_installment) return Alert.alert('Validation', 'Monthly installment is required.');
+      if (accountForm.type === 'fd' && !accountForm.balance) return Alert.alert('Validation', 'Principal amount is required.');
+    }
     setSavingAccount(true);
     try {
-      await createAccount({ name: accountForm.name.trim(), type: accountForm.type, opening_balance: parseFloat(accountForm.balance) || 0 });
+      const principal = isDeposit && accountForm.type === 'fd' ? parseFloat(accountForm.balance) || 0 : parseFloat(accountForm.balance) || 0;
+      const account = await createAccount({ name: accountForm.name.trim(), type: accountForm.type, opening_balance: principal });
+      if (isDeposit) {
+        await createDepositDetail(account.id, {
+          principal_amount: accountForm.type === 'fd' ? parseFloat(accountForm.balance) || 0 : parseFloat(depositForm.monthly_installment) || 0,
+          monthly_installment: accountForm.type === 'rd' ? parseFloat(depositForm.monthly_installment) || 0 : null,
+          interest_rate: parseFloat(depositForm.interest_rate),
+          tenure_months: parseInt(depositForm.tenure_months, 10),
+          maturity_amount: depositForm.maturity_amount ? parseFloat(depositForm.maturity_amount) : null,
+          start_date: depositForm.start_date.trim() || null,
+        });
+      }
       setAccountModal(false);
       setAccountForm({ name: '', type: 'savings', balance: '' });
+      setDepositForm({ interest_rate: '', tenure_months: '', monthly_installment: '', maturity_amount: '', start_date: '' });
       load();
     } catch (e) {
       Alert.alert('Error', e.message);
     } finally {
       setSavingAccount(false);
+    }
+  };
+
+  const handleTransfer = async () => {
+    if (!transferForm.from_account_id) return Alert.alert('Validation', 'Select source account.');
+    if (!transferForm.to_account_id)   return Alert.alert('Validation', 'Select destination account.');
+    if (transferForm.from_account_id === transferForm.to_account_id)
+      return Alert.alert('Validation', 'Source and destination must be different.');
+    if (!transferForm.amount || parseFloat(transferForm.amount) <= 0)
+      return Alert.alert('Validation', 'Enter a valid amount.');
+    setSavingTransfer(true);
+    try {
+      await createTransfer({
+        from_account_id: transferForm.from_account_id,
+        to_account_id:   transferForm.to_account_id,
+        amount:          parseFloat(transferForm.amount),
+        txn_date:        transferForm.txn_date || new Date().toISOString().split('T')[0],
+        note:            transferForm.note.trim() || null,
+      });
+      setTransferModal(false);
+      setTransferForm(EMPTY_TRANSFER_FORM);
+      load();
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setSavingTransfer(false);
     }
   };
 
@@ -132,22 +251,21 @@ export default function AccountsScreen({ navigation }) {
       {error && <ErrorBanner message={error} onRetry={load} />}
 
       <View style={styles.sectionRow}>
-        <TouchableOpacity
-          style={[styles.sectionChip, section === 'accounts' && styles.sectionChipActive]}
-          onPress={() => setSection('accounts')}
-        >
-          <Text style={[styles.sectionChipText, section === 'accounts' && styles.sectionChipTextActive]}>
-            🏦 Accounts
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.sectionChip, section === 'assets' && styles.sectionChipActive]}
-          onPress={() => setSection('assets')}
-        >
-          <Text style={[styles.sectionChipText, section === 'assets' && styles.sectionChipTextActive]}>
-            💼 Assets
-          </Text>
-        </TouchableOpacity>
+        {[
+          { key: 'accounts',     label: '🏦 Accounts' },
+          { key: 'assets',       label: '💼 Assets' },
+          { key: 'outstandings', label: '🤝 Loans' },
+        ].map((s) => (
+          <TouchableOpacity
+            key={s.key}
+            style={[styles.sectionChip, section === s.key && styles.sectionChipActive]}
+            onPress={() => setSection(s.key)}
+          >
+            <Text style={[styles.sectionChipText, section === s.key && styles.sectionChipTextActive]}>
+              {s.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       {section === 'accounts' ? (
@@ -239,9 +357,94 @@ export default function AccountsScreen({ navigation }) {
         />
       )}
 
+      {section === 'outstandings' && (
+        <FlatList
+          data={outstandings.items}
+          keyExtractor={(item) => String(item.id)}
+          contentContainerStyle={styles.list}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
+          ListHeaderComponent={(
+            <>
+              <View style={styles.outstandingSummary}>
+                <View style={styles.outStat}>
+                  <Text style={styles.outStatLabel}>Lent Out</Text>
+                  <Text style={[styles.outStatValue, { color: C.income }]}>{formatCurrency(outstandings.total_lent)}</Text>
+                </View>
+                <View style={styles.outStatDivider} />
+                <View style={styles.outStat}>
+                  <Text style={styles.outStatLabel}>Borrowed</Text>
+                  <Text style={[styles.outStatValue, { color: C.expense }]}>{formatCurrency(outstandings.total_borrowed)}</Text>
+                </View>
+                <View style={styles.outStatDivider} />
+                <View style={styles.outStat}>
+                  <Text style={styles.outStatLabel}>Net</Text>
+                  <Text style={[styles.outStatValue, { color: outstandings.net_outstanding >= 0 ? C.income : C.expense }]}>
+                    {formatCurrency(outstandings.net_outstanding)}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.settledToggle}
+                onPress={() => setShowSettled((v) => !v)}
+              >
+                <Text style={[styles.settledToggleText, { color: showSettled ? C.primaryLight : C.textMuted }]}>
+                  {showSettled ? '✓ Showing Settled' : 'Show Settled'}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+          ListEmptyComponent={<EmptyState icon="🤝" message={showSettled ? 'No settled loans.' : 'No active loans. Tap + to add one!'} />}
+          renderItem={({ item }) => {
+            const isLent = item.direction === 'lent';
+            const isOverdue = item.due_date && !item.is_settled && new Date(item.due_date) < new Date();
+            return (
+              <TouchableOpacity onPress={() => handleOutstandingAction(item)}>
+                <Card style={[styles.accountCard, item.is_settled && styles.settledCard]}>
+                  <View style={styles.row}>
+                    <View style={[styles.outIconWrap, { backgroundColor: isLent ? C.income + '22' : C.expense + '22' }]}>
+                      <Text style={styles.outIcon}>{isLent ? '↗' : '↙'}</Text>
+                    </View>
+                    <View style={styles.info}>
+                      <View style={styles.outNameRow}>
+                        <Text style={styles.name}>{item.person_name}</Text>
+                        {item.is_settled && <View style={styles.settledBadge}><Text style={styles.settledBadgeText}>Settled</Text></View>}
+                      </View>
+                      <Text style={styles.outDirection}>{isLent ? 'Lent to' : 'Borrowed from'}{item.description ? ` · ${item.description}` : ''}</Text>
+                      {item.due_date && (
+                        <Text style={[styles.dueDate, { color: isOverdue ? C.expense : C.textMuted }]}>
+                          {isOverdue ? '⚠️ ' : ''}Due {item.due_date}
+                        </Text>
+                      )}
+                    </View>
+                    <Text style={[styles.balance, { color: isLent ? C.income : C.expense }]}>
+                      {formatCurrency(item.amount)}
+                    </Text>
+                  </View>
+                </Card>
+              </TouchableOpacity>
+            );
+          }}
+        />
+      )}
+
+      {/* Transfer FAB (only on accounts section) */}
+      {section === 'accounts' && (
+        <TouchableOpacity
+          style={[styles.fab, styles.fabTransfer]}
+          onPress={() => setTransferModal(true)}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.fabIcon}>⇄</Text>
+        </TouchableOpacity>
+      )}
+
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => section === 'accounts' ? setAccountModal(true) : setAssetModal(true)}
+        onPress={() => {
+          if (section === 'accounts') setAccountModal(true);
+          else if (section === 'assets') setAssetModal(true);
+          else setOutstandingModal(true);
+        }}
         activeOpacity={0.85}
       >
         <Text style={styles.fabIcon}>+</Text>
@@ -250,13 +453,13 @@ export default function AccountsScreen({ navigation }) {
       {/* Account add modal */}
       <Modal visible={accountModal} animationType="slide" transparent>
         <View style={styles.overlay}>
-          <View style={styles.modal}>
+          <ScrollView contentContainerStyle={styles.modal} keyboardShouldPersistTaps="handled">
             <Text style={styles.modalTitle}>New Account</Text>
 
-            <Text style={styles.label}>Account Name</Text>
+            <Text style={styles.label}>Account Name <Text style={styles.required}>*</Text></Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g. HDFC Savings"
+              placeholder="e.g. HDFC FD 2024"
               placeholderTextColor={C.textMuted}
               value={accountForm.name}
               onChangeText={(v) => setAccountForm({ ...accountForm, name: v })}
@@ -271,27 +474,115 @@ export default function AccountsScreen({ navigation }) {
                   onPress={() => setAccountForm({ ...accountForm, type: t })}
                 >
                   <Text style={[styles.typeChipText, accountForm.type === t && styles.typeChipTextActive]}>
-                    {TYPE_ICONS[t]} {t}
+                    {TYPE_ICONS[t]} {TYPE_LABELS[t] || t.toUpperCase()}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
-            <Text style={styles.label}>Opening Balance</Text>
+            {DEPOSIT_TYPES.includes(accountForm.type) ? (
+              <>
+                {accountForm.type === 'fd' ? (
+                  <>
+                    <Text style={styles.label}>Principal Amount <Text style={styles.required}>*</Text></Text>
+                    <TextInput style={styles.input} placeholder="e.g. 100000" placeholderTextColor={C.textMuted} keyboardType="numeric" value={accountForm.balance} onChangeText={(v) => setAccountForm({ ...accountForm, balance: v })} />
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.label}>Monthly Installment <Text style={styles.required}>*</Text></Text>
+                    <TextInput style={styles.input} placeholder="e.g. 5000" placeholderTextColor={C.textMuted} keyboardType="numeric" value={depositForm.monthly_installment} onChangeText={(v) => setDepositForm({ ...depositForm, monthly_installment: v })} />
+                  </>
+                )}
+                <Text style={styles.label}>Interest Rate (% p.a.) <Text style={styles.required}>*</Text></Text>
+                <TextInput style={styles.input} placeholder="e.g. 7.5" placeholderTextColor={C.textMuted} keyboardType="numeric" value={depositForm.interest_rate} onChangeText={(v) => setDepositForm({ ...depositForm, interest_rate: v })} />
+
+                <Text style={styles.label}>Tenure (months) <Text style={styles.required}>*</Text></Text>
+                <TextInput style={styles.input} placeholder="e.g. 24" placeholderTextColor={C.textMuted} keyboardType="numeric" value={depositForm.tenure_months} onChangeText={(v) => setDepositForm({ ...depositForm, tenure_months: v })} />
+
+                <Text style={styles.label}>Start Date <Text style={styles.optional}>(YYYY-MM-DD)</Text></Text>
+                <TextInput style={styles.input} placeholder="defaults to today" placeholderTextColor={C.textMuted} value={depositForm.start_date} onChangeText={(v) => setDepositForm({ ...depositForm, start_date: v })} />
+
+                <Text style={styles.label}>Maturity Amount <Text style={styles.optional}>(auto-computed if blank)</Text></Text>
+                <TextInput style={styles.input} placeholder="Leave blank to auto-calculate" placeholderTextColor={C.textMuted} keyboardType="numeric" value={depositForm.maturity_amount} onChangeText={(v) => setDepositForm({ ...depositForm, maturity_amount: v })} />
+              </>
+            ) : (
+              <>
+                <Text style={styles.label}>Opening Balance</Text>
+                <TextInput style={styles.input} placeholder="0" placeholderTextColor={C.textMuted} keyboardType="numeric" value={accountForm.balance} onChangeText={(v) => setAccountForm({ ...accountForm, balance: v })} />
+              </>
+            )}
+
+            <View style={styles.modalBtns}>
+              <Button title="Cancel" variant="outline" onPress={() => { setAccountModal(false); setAccountForm({ name: '', type: 'savings', balance: '' }); setDepositForm({ interest_rate: '', tenure_months: '', monthly_installment: '', maturity_amount: '', start_date: '' }); }} style={styles.halfBtn} />
+              <Button title="Save" onPress={handleAddAccount} loading={savingAccount} style={styles.halfBtn} />
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Outstanding add modal */}
+      <Modal visible={outstandingModal} animationType="slide" transparent>
+        <View style={styles.overlay}>
+          <ScrollView contentContainerStyle={styles.modal} keyboardShouldPersistTaps="handled">
+            <Text style={styles.modalTitle}>New Loan Entry</Text>
+
+            <Text style={styles.label}>Direction</Text>
+            <View style={styles.chipRow}>
+              {[{ key: 'lent', label: '↗ I Lent' }, { key: 'borrowed', label: '↙ I Borrowed' }].map((d) => (
+                <TouchableOpacity
+                  key={d.key}
+                  style={[styles.typeChip, outstandingForm.direction === d.key && styles.typeChipActive]}
+                  onPress={() => setOutstandingForm({ ...outstandingForm, direction: d.key })}
+                >
+                  <Text style={[styles.typeChipText, outstandingForm.direction === d.key && styles.typeChipTextActive]}>
+                    {d.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.label}>Person Name <Text style={styles.required}>*</Text></Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Ravi Kumar"
+              placeholderTextColor={C.textMuted}
+              value={outstandingForm.person_name}
+              onChangeText={(v) => setOutstandingForm({ ...outstandingForm, person_name: v })}
+            />
+
+            <Text style={styles.label}>Amount <Text style={styles.required}>*</Text></Text>
             <TextInput
               style={styles.input}
               placeholder="0.00"
               placeholderTextColor={C.textMuted}
               keyboardType="numeric"
-              value={accountForm.balance}
-              onChangeText={(v) => setAccountForm({ ...accountForm, balance: v })}
+              value={outstandingForm.amount}
+              onChangeText={(v) => setOutstandingForm({ ...outstandingForm, amount: v })}
+            />
+
+            <Text style={styles.label}>Description <Text style={styles.optional}>(optional)</Text></Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Emergency loan"
+              placeholderTextColor={C.textMuted}
+              value={outstandingForm.description}
+              onChangeText={(v) => setOutstandingForm({ ...outstandingForm, description: v })}
+            />
+
+            <Text style={styles.label}>Due Date <Text style={styles.optional}>(YYYY-MM-DD)</Text></Text>
+            <TextInput
+              style={styles.input}
+              placeholder="2025-12-31"
+              placeholderTextColor={C.textMuted}
+              value={outstandingForm.due_date}
+              onChangeText={(v) => setOutstandingForm({ ...outstandingForm, due_date: v })}
             />
 
             <View style={styles.modalBtns}>
-              <Button title="Cancel" variant="outline" onPress={() => setAccountModal(false)} style={styles.halfBtn} />
-              <Button title="Save" onPress={handleAddAccount} loading={savingAccount} style={styles.halfBtn} />
+              <Button title="Cancel" variant="outline" onPress={() => { setOutstandingModal(false); setOutstandingForm(EMPTY_OUTSTANDING_FORM); }} style={styles.halfBtn} />
+              <Button title="Save" onPress={handleAddOutstanding} loading={savingOutstanding} style={styles.halfBtn} />
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -371,6 +662,78 @@ export default function AccountsScreen({ navigation }) {
           </ScrollView>
         </View>
       </Modal>
+
+      {/* Transfer modal */}
+      <Modal visible={transferModal} animationType="slide" transparent>
+        <View style={styles.overlay}>
+          <ScrollView contentContainerStyle={styles.modal} keyboardShouldPersistTaps="handled">
+            <Text style={styles.modalTitle}>Transfer Money</Text>
+
+            <Text style={styles.label}>From Account <Text style={styles.required}>*</Text></Text>
+            <View style={styles.chipRow}>
+              {accounts.map((a) => (
+                <TouchableOpacity
+                  key={a.id}
+                  style={[styles.typeChip, transferForm.from_account_id === a.id && styles.typeChipActive]}
+                  onPress={() => setTransferForm({ ...transferForm, from_account_id: a.id })}
+                >
+                  <Text style={[styles.typeChipText, transferForm.from_account_id === a.id && styles.typeChipTextActive]}>
+                    {TYPE_ICONS[a.type] || '🏦'} {a.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.label}>To Account <Text style={styles.required}>*</Text></Text>
+            <View style={styles.chipRow}>
+              {accounts.filter((a) => a.id !== transferForm.from_account_id).map((a) => (
+                <TouchableOpacity
+                  key={a.id}
+                  style={[styles.typeChip, transferForm.to_account_id === a.id && styles.typeChipActive]}
+                  onPress={() => setTransferForm({ ...transferForm, to_account_id: a.id })}
+                >
+                  <Text style={[styles.typeChipText, transferForm.to_account_id === a.id && styles.typeChipTextActive]}>
+                    {TYPE_ICONS[a.type] || '🏦'} {a.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.label}>Amount <Text style={styles.required}>*</Text></Text>
+            <TextInput
+              style={styles.input}
+              placeholder="₹0"
+              placeholderTextColor={C.textMuted}
+              keyboardType="numeric"
+              value={transferForm.amount}
+              onChangeText={(v) => setTransferForm({ ...transferForm, amount: v })}
+            />
+
+            <Text style={styles.label}>Date <Text style={styles.optional}>(YYYY-MM-DD, default today)</Text></Text>
+            <TextInput
+              style={styles.input}
+              placeholder={new Date().toISOString().split('T')[0]}
+              placeholderTextColor={C.textMuted}
+              value={transferForm.txn_date}
+              onChangeText={(v) => setTransferForm({ ...transferForm, txn_date: v })}
+            />
+
+            <Text style={styles.label}>Note <Text style={styles.optional}>(optional)</Text></Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. CC bill payment, FD maturity"
+              placeholderTextColor={C.textMuted}
+              value={transferForm.note}
+              onChangeText={(v) => setTransferForm({ ...transferForm, note: v })}
+            />
+
+            <View style={styles.modalBtns}>
+              <Button title="Cancel" variant="outline" onPress={() => { setTransferModal(false); setTransferForm(EMPTY_TRANSFER_FORM); }} style={styles.halfBtn} />
+              <Button title="Transfer" onPress={handleTransfer} loading={savingTransfer} style={styles.halfBtn} />
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -399,7 +762,8 @@ const makeStyles = (C) => StyleSheet.create({
     backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center',
     shadowColor: C.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 8, elevation: 10,
   },
-  fabIcon: { color: '#fff', fontSize: 28, lineHeight: 32 },
+  fabTransfer: { bottom: 90, backgroundColor: C.income },
+  fabIcon: { color: '#fff', fontSize: 26, lineHeight: 30 },
 
   row: { flexDirection: 'row', alignItems: 'center' },
   avatar: { marginRight: SPACING.sm },
@@ -420,6 +784,28 @@ const makeStyles = (C) => StyleSheet.create({
   balance: { fontWeight: '700', fontSize: FONTS.sizes.lg },
   assetRight: { alignItems: 'flex-end' },
   gainBadge: { fontSize: FONTS.sizes.xs, fontWeight: '600', marginTop: 2 },
+
+  outstandingSummary: {
+    flexDirection: 'row', backgroundColor: C.surface, borderRadius: RADIUS.lg,
+    borderWidth: 1, borderColor: C.border, padding: SPACING.md, marginBottom: SPACING.sm,
+  },
+  outStat: { flex: 1, alignItems: 'center' },
+  outStatLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginBottom: 4 },
+  outStatValue: { fontSize: FONTS.sizes.md, fontWeight: '800' },
+  outStatDivider: { width: 1, backgroundColor: C.border, marginHorizontal: SPACING.sm },
+  settledToggle: { alignSelf: 'flex-end', marginBottom: SPACING.sm, paddingVertical: 4, paddingHorizontal: SPACING.sm },
+  settledToggleText: { fontSize: FONTS.sizes.xs, fontWeight: '600' },
+  outIconWrap: {
+    width: 44, height: 44, borderRadius: RADIUS.lg,
+    alignItems: 'center', justifyContent: 'center', marginRight: SPACING.sm,
+  },
+  outIcon: { fontSize: 20, fontWeight: '700' },
+  outNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  outDirection: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 2 },
+  dueDate: { fontSize: FONTS.sizes.xs, marginTop: 2 },
+  settledCard: { opacity: 0.6 },
+  settledBadge: { backgroundColor: C.income + '22', borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 2 },
+  settledBadgeText: { color: C.income, fontSize: FONTS.sizes.xs, fontWeight: '700' },
 
   overlay: { flex: 1, backgroundColor: '#000000AA', justifyContent: 'flex-end' },
   modal: {

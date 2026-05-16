@@ -1,13 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import {
   View, Text, TextInput, StyleSheet, TouchableOpacity,
-  KeyboardAvoidingView, Platform, ScrollView, Alert,
+  KeyboardAvoidingView, Platform, ScrollView, Alert, Image,
 } from 'react-native';
 import { login } from '../api/auth';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import Button from '../components/Button';
-import AppLogo from '../components/AppLogo';
 
 export default function LoginScreen({ navigation }) {
   const { colors: C } = useTheme();
@@ -36,8 +35,11 @@ export default function LoginScreen({ navigation }) {
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
 
         <View style={styles.header}>
-          <AppLogo size={90} />
-          <Text style={styles.title}>NestWorth</Text>
+          <Image
+            source={require('../assets/nestworth-logo-banner.png')}
+            style={styles.banner}
+            resizeMode="contain"
+          />
           <Text style={styles.subtitle}>Manage your money, your way</Text>
         </View>
 
@@ -84,9 +86,9 @@ export default function LoginScreen({ navigation }) {
 
 const makeStyles = (C) => StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
-  content: { flexGrow: 1, justifyContent: 'center', padding: SPACING.lg },
+  content: { flexGrow: 1, justifyContent: 'center', padding: SPACING.lg, maxWidth: 480, width: '100%', alignSelf: 'center' },
   header: { alignItems: 'center', marginBottom: SPACING.xl },
-  title: { color: C.textPrimary, fontSize: 42, fontWeight: '800', letterSpacing: 1, marginTop: SPACING.md },
+  banner: { width: 300, height: 120, marginBottom: SPACING.sm, backgroundColor: C.bg },
   subtitle: { color: C.textSecondary, fontSize: FONTS.sizes.md, marginTop: 4 },
   form: { backgroundColor: C.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: C.border },
   formTitle: { color: C.textPrimary, fontSize: FONTS.sizes.xl, fontWeight: '700', marginBottom: SPACING.md },

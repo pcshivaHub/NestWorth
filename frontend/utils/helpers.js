@@ -1,8 +1,8 @@
 export const formatCurrency = (amount, currency = '₹') => {
-  const num = parseFloat(amount) || 0;
+  const num = Math.round(parseFloat(amount) || 0);
   return `${currency}${num.toLocaleString('en-IN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   })}`;
 };
 

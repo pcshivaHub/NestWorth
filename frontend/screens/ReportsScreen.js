@@ -5,7 +5,8 @@ import {
 import { BarChart, PieChart, LineChart } from 'react-native-gifted-charts';
 import {
   getTrend, getCategoryBreakdown, getBudgetVsActual,
-  getNetWorthTrend, getFamilyBreakdown, getAssetPortfolio,
+  getNetWorthTrend, getNetWorthSnapshot, getFamilyBreakdown,
+  getAssetPortfolio, getExpenseCategoryTrends,
 } from '../api/reports';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
@@ -27,14 +28,15 @@ const ASSET_TYPE_ICONS = {
 
 // Sub-tabs with isHeader sentinels for section labels
 const SUB_TABS = [
-  { key: '__cf',       label: 'CASH FLOW',  isHeader: true },
-  { key: 'trend',      label: 'Trend' },
-  { key: 'categories', label: 'Categories' },
-  { key: 'budget',     label: 'Budget' },
-  { key: '__w',        label: 'WEALTH',     isHeader: true },
-  { key: 'assets',     label: 'Assets' },
-  { key: 'networth',   label: 'Net Worth' },
-  { key: 'family',     label: 'Family' },
+  { key: '__cf',           label: 'CASH FLOW',      isHeader: true },
+  { key: 'trend',          label: 'Trend' },
+  { key: 'categories',     label: 'Categories' },
+  { key: 'expense_trends', label: 'Exp. Trends' },
+  { key: 'budget',         label: 'Budget' },
+  { key: '__w',            label: 'WEALTH',         isHeader: true },
+  { key: 'assets',         label: 'Assets' },
+  { key: 'networth',       label: 'Net Worth' },
+  { key: 'family',         label: 'Family' },
 ];
 
 const PERIOD_OPTIONS = [
@@ -416,6 +418,154 @@ function FamilyReport({ period, C, styles }) {
   );
 }
 
+// ─── ExpenseTrendsReport ───────────────────────────────
+
+function ExpenseTrendsReport({ months, C, styles }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    try { setError(null); setLoading(true); setData(await getExpenseCategoryTrends(months)); }
+    catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [months]);
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <LoadingSpinner />;
+  if (error) return <ErrorBanner message={error} onRetry={load} />;
+  if (!data || data.categories.length === 0) return <EmptyState icon="📉" message="No expense data yet." />;
+
+  // Top 5 categories only — keeps chart readable
+  const topCats = data.categories.slice(0, 5);
+  const labels = data.month_labels || [];
+
+  // Build grouped bar data: for each month, one bar per category
+  const barData = [];
+  labels.forEach((lbl, mi) => {
+    topCats.forEach((cat, ci) => {
+      const isLast = ci === topCats.length - 1;
+      barData.push({
+        value: cat.monthly_amounts[mi] || 0,
+        frontColor: PALETTE[ci % PALETTE.length],
+        label: ci === 0 ? lbl : '',
+        spacing: isLast ? (mi < labels.length - 1 ? 12 : 2) : 2,
+        labelTextStyle: { color: C.textMuted, fontSize: 9 },
+      });
+    });
+  });
+
+  return (
+    <View>
+      <Text style={styles.heroSubLabel}>TOP {topCats.length} EXPENSE CATEGORIES · {months}M</Text>
+      {barData.length > 0 ? (
+        <BarChart
+          data={barData} barWidth={10} noOfSections={4} isAnimated width={CHART_WIDTH}
+          yAxisTextStyle={{ color: C.textMuted, fontSize: 9 }}
+          xAxisColor={C.border} yAxisColor={C.border} rulesColor={C.border}
+        />
+      ) : <EmptyState icon="📉" message="No data for this period." />}
+
+      <View style={[styles.legendGrid, { marginTop: SPACING.md }]}>
+        {topCats.map((cat, i) => (
+          <View key={cat.category_id || cat.category_name} style={styles.legendGridItem}>
+            <LegendDot color={PALETTE[i % PALETTE.length]} label={cat.category_name} styles={styles} />
+            <Text style={[styles.legendAmt, { color: C.expense }]}>{formatCurrency(cat.total)}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── NetWorthSnapshotReport ────────────────────────────
+
+const NW_TYPE_ICONS  = { savings: '🏦', checking: '💳', cash: '💵', credit: '🔖', fd: '📅', rd: '🔄', mutual_fund: '📊', equity: '📈', lic: '🛡️', ppf: '🏛️', nps: '🎯' };
+const NW_TYPE_LABELS = { savings: 'Savings', checking: 'Checking', cash: 'Cash', credit: 'Credit Card', fd: 'Fixed Deposit', rd: 'Recurring Deposit', mutual_fund: 'Mutual Fund', equity: 'Equity / Stocks', lic: 'LIC Policy', ppf: 'PPF', nps: 'NPS' };
+
+function TierRow({ label, value, color, bold = false, styles, indent = false }) {
+  return (
+    <View style={[styles.snapshotRow, indent && { paddingLeft: 16 }]}>
+      <Text style={bold ? styles.snapshotLabel : styles.snapshotSubLabel}>{label}</Text>
+      <Text style={[bold ? styles.snapshotValue : styles.snapshotSubValue, { color }]}>{value}</Text>
+    </View>
+  );
+}
+
+function NetWorthSnapshotCard({ C, styles }) {
+  const [snap, setSnap] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    try { setError(null); setLoading(true); setSnap(await getNetWorthSnapshot()); }
+    catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <LoadingSpinner />;
+  if (error) return <ErrorBanner message={error} onRetry={load} />;
+  if (!snap) return null;
+
+  return (
+    <View style={styles.snapshotCard}>
+      <Text style={styles.heroSubLabel}>NET WORTH</Text>
+      <Text style={[styles.heroAmount, { color: snap.grand2_with_investments >= 0 ? C.netBalance : C.expense }]}>
+        {formatCurrency(snap.grand2_with_investments)}
+      </Text>
+
+      {/* ── Tier 1: In Hand ─────────────────────── */}
+      <View style={styles.snapshotDivider} />
+      <View style={[styles.snapshotTierHeader, { backgroundColor: C.primary + '18' }]}>
+        <Text style={[styles.snapshotTierLabel, { color: C.primaryLight }]}>ACTUAL IN HAND</Text>
+        <Text style={[styles.snapshotTierValue, { color: C.primaryLight }]}>{formatCurrency(snap.actual_in_hand)}</Text>
+      </View>
+      {(snap.bank_breakdown || []).map((item) => (
+        <TierRow
+          key={item.account_type}
+          label={`  ${NW_TYPE_ICONS[item.account_type] || '💰'}  ${NW_TYPE_LABELS[item.account_type] || item.account_type}${item.count > 1 ? ` (${item.count})` : ''}`}
+          value={formatCurrency(item.balance)}
+          color={item.balance >= 0 ? C.textSecondary : C.expense}
+          styles={styles}
+          indent
+        />
+      ))}
+
+      {/* ── Tier 2: + Outstandings ──────────────── */}
+      <View style={styles.snapshotDivider} />
+      <View style={[styles.snapshotTierHeader, { backgroundColor: C.income + '18' }]}>
+        <Text style={[styles.snapshotTierLabel, { color: C.income }]}>WITH OUTSTANDINGS</Text>
+        <Text style={[styles.snapshotTierValue, { color: C.income }]}>{formatCurrency(snap.grand1_with_outstandings)}</Text>
+      </View>
+      <TierRow label="  ↗  Lent Out"  value={formatCurrency(snap.total_lent)}     color={C.income}  styles={styles} indent />
+      <TierRow label="  ↙  Borrowed"  value={`-${formatCurrency(snap.total_borrowed)}`} color={C.expense} styles={styles} indent />
+
+      {/* ── Tier 3: + Investments + Assets ─────── */}
+      <View style={styles.snapshotDivider} />
+      <View style={[styles.snapshotTierHeader, { backgroundColor: C.netBalance + '18' }]}>
+        <Text style={[styles.snapshotTierLabel, { color: C.netBalance }]}>WITH INVESTMENTS</Text>
+        <Text style={[styles.snapshotTierValue, { color: C.netBalance }]}>{formatCurrency(snap.grand2_with_investments)}</Text>
+      </View>
+      {(snap.investment_breakdown || []).length > 0 && (
+        <>
+          <TierRow label="  📂  Investments" value={formatCurrency(snap.investment_value)} color={C.textSecondary} styles={styles} indent />
+          {snap.investment_breakdown.map((item) => (
+            <TierRow
+              key={item.account_type}
+              label={`      ${NW_TYPE_ICONS[item.account_type] || '📂'}  ${NW_TYPE_LABELS[item.account_type] || item.account_type}${item.count > 1 ? ` (${item.count})` : ''}`}
+              value={formatCurrency(item.balance)}
+              color={C.textMuted}
+              styles={styles}
+            />
+          ))}
+        </>
+      )}
+      <TierRow label="  💼  Asset Portfolio" value={formatCurrency(snap.asset_value)} color={C.textSecondary} styles={styles} indent />
+    </View>
+  );
+}
+
 // ─── ReportsScreen ─────────────────────────────────────
 
 export default function ReportsScreen() {
@@ -427,7 +577,7 @@ export default function ReportsScreen() {
   const [months, setMonths] = useState(6);
 
   const showPeriod = ['categories', 'budget', 'family'].includes(activeTab);
-  const showMonths = ['trend', 'networth'].includes(activeTab);
+  const showMonths = ['trend', 'networth', 'expense_trends'].includes(activeTab);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -484,12 +634,19 @@ export default function ReportsScreen() {
       )}
 
       <Card style={styles.reportCard}>
-        {activeTab === 'trend'      && <TrendReport months={months} C={C} styles={styles} />}
-        {activeTab === 'categories' && <CategoryReport period={period} C={C} styles={styles} />}
-        {activeTab === 'budget'     && <BudgetReport period={period} C={C} styles={styles} />}
-        {activeTab === 'assets'     && <AssetPortfolioReport C={C} styles={styles} />}
-        {activeTab === 'networth'   && <NetWorthReport months={months} C={C} styles={styles} />}
-        {activeTab === 'family'     && <FamilyReport period={period} C={C} styles={styles} />}
+        {activeTab === 'trend'          && <TrendReport months={months} C={C} styles={styles} />}
+        {activeTab === 'categories'     && <CategoryReport period={period} C={C} styles={styles} />}
+        {activeTab === 'expense_trends' && <ExpenseTrendsReport months={months} C={C} styles={styles} />}
+        {activeTab === 'budget'         && <BudgetReport period={period} C={C} styles={styles} />}
+        {activeTab === 'assets'         && <AssetPortfolioReport C={C} styles={styles} />}
+        {activeTab === 'networth'       && (
+          <>
+            <NetWorthSnapshotCard C={C} styles={styles} />
+            <View style={styles.snapshotDivider} />
+            <NetWorthReport months={months} C={C} styles={styles} />
+          </>
+        )}
+        {activeTab === 'family'         && <FamilyReport period={period} C={C} styles={styles} />}
       </Card>
     </ScrollView>
   );
@@ -570,6 +727,18 @@ const makeStyles = (C) => StyleSheet.create({
   assetRowRight: { alignItems: 'flex-end' },
   assetRowValue: { fontSize: FONTS.sizes.sm, fontWeight: '700' },
   assetRowGain: { fontSize: FONTS.sizes.xs, fontWeight: '600', marginTop: 2 },
+
+  snapshotCard: { marginBottom: SPACING.md },
+  snapshotDivider: { height: 1, backgroundColor: C.border, marginVertical: SPACING.md },
+  snapshotRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },
+  snapshotLabel: { color: C.textSecondary, fontSize: FONTS.sizes.sm, fontWeight: '600' },
+  snapshotValue: { fontSize: FONTS.sizes.sm, fontWeight: '700' },
+  snapshotSubRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, paddingLeft: SPACING.lg },
+  snapshotSubLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs },
+  snapshotSubValue: { fontSize: FONTS.sizes.xs, fontWeight: '600' },
+  snapshotTierHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 7, paddingHorizontal: SPACING.sm, borderRadius: RADIUS.md, marginVertical: 4 },
+  snapshotTierLabel: { fontSize: FONTS.sizes.xs, fontWeight: '800', letterSpacing: 1 },
+  snapshotTierValue: { fontSize: FONTS.sizes.md, fontWeight: '800' },
 
   memberCard: {
     backgroundColor: C.surfaceHigh, borderRadius: RADIUS.md, borderWidth: 1,

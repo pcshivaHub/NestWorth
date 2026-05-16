@@ -102,6 +102,15 @@ class BalanceResponse(BaseModel):
     balance: float
 
 
+class BalanceHistoryPoint(BaseModel):
+    label: str
+    balance: float
+
+
+class AccountBalanceHistoryResponse(BaseModel):
+    history: List[BalanceHistoryPoint]
+
+
 # ─────────────────────────────────────────
 # FAMILY
 # ─────────────────────────────────────────
@@ -274,3 +283,151 @@ class AssetPortfolioResponse(BaseModel):
     total_gain_loss: float
     by_type: List[AssetTypeBreakdown]
     assets: List[AssetPortfolioItem]
+
+
+# ─────────────────────────────────────────
+# DEPOSITS
+# ─────────────────────────────────────────
+
+class DepositDetailCreate(BaseModel):
+    principal_amount: float
+    monthly_installment: Optional[float] = None
+    interest_rate: float
+    tenure_months: int
+    maturity_amount: Optional[float] = None
+    start_date: Optional[date] = None
+    maturity_date: Optional[date] = None
+
+
+class DepositDetailResponse(BaseModel):
+    id: UUID
+    account_id: UUID
+    principal_amount: float
+    monthly_installment: Optional[float] = None
+    interest_rate: float
+    tenure_months: int
+    maturity_amount: Optional[float] = None
+    maturity_date: Optional[date] = None
+    start_date: Optional[date] = None
+    is_closed: bool
+    closing_amount: Optional[float] = None
+    closed_date: Optional[date] = None
+    transferred_to_account_id: Optional[UUID] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CloseDepositRequest(BaseModel):
+    closing_amount: float
+    transferred_to_account_id: UUID
+    closed_date: Optional[date] = None
+
+
+# ─────────────────────────────────────────
+# OUTSTANDINGS
+# ─────────────────────────────────────────
+
+class OutstandingCreate(BaseModel):
+    person_name: str
+    amount: float
+    description: Optional[str] = None
+    direction: str = "lent"          # "lent" | "borrowed"
+    due_date: Optional[date] = None
+
+
+class OutstandingResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    person_name: str
+    amount: float
+    description: Optional[str] = None
+    direction: str
+    due_date: Optional[date] = None
+    is_settled: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class OutstandingsSummary(BaseModel):
+    total_lent: float
+    total_borrowed: float
+    net_outstanding: float
+    items: List[OutstandingResponse]
+
+
+# ─────────────────────────────────────────
+# NET WORTH SNAPSHOT
+# ─────────────────────────────────────────
+
+class AccountTypeBreakdown(BaseModel):
+    account_type: str
+    balance: float
+    count: int
+
+
+class NetWorthSnapshotResponse(BaseModel):
+    # Tier 1 — bank accounts only (savings, checking, cash, credit, fd, rd)
+    actual_in_hand: float
+    bank_breakdown: List[AccountTypeBreakdown] = []
+    # Tier 2 — + net outstandings
+    grand1_with_outstandings: float
+    total_lent: float
+    total_borrowed: float
+    outstanding_net: float
+    # Tier 3 — + investments + physical assets
+    grand2_with_investments: float
+    investment_value: float
+    investment_breakdown: List[AccountTypeBreakdown] = []
+    asset_value: float
+    # Legacy aliases kept for backward compatibility
+    net_worth: float
+    account_balance: float
+    account_breakdown: List[AccountTypeBreakdown] = []
+
+
+# ─────────────────────────────────────────
+# TRANSFERS
+# ─────────────────────────────────────────
+
+class TransferCreate(BaseModel):
+    from_account_id: UUID
+    to_account_id: UUID
+    amount: float
+    txn_date: date
+    note: Optional[str] = None
+
+
+class TransferResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    from_account_id: UUID
+    to_account_id: UUID
+    from_account_name: Optional[str] = None
+    to_account_name: Optional[str] = None
+    amount: float
+    txn_date: date
+    note: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ─────────────────────────────────────────
+# EXPENSE CATEGORY TRENDS
+# ─────────────────────────────────────────
+
+class CategoryTrendItem(BaseModel):
+    category_id: Optional[str] = None
+    category_name: str
+    monthly_amounts: List[float]
+    total: float
+
+
+class ExpenseCategoryTrendsResponse(BaseModel):
+    month_labels: List[str]
+    categories: List[CategoryTrendItem]

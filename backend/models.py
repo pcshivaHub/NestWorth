@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Date, Numeric, ForeignKey, Text, DateTime
+from sqlalchemy import Column, String, Date, Numeric, ForeignKey, Text, DateTime, Boolean, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime, timezone
@@ -102,3 +102,50 @@ class AssetValueHistory(Base):
     recorded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     asset = relationship("Asset", back_populates="value_history")
+
+
+class Outstanding(Base):
+    __tablename__ = "outstandings"
+
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    family_id   = Column(UUID(as_uuid=True), ForeignKey("families.id", ondelete="CASCADE"), nullable=True)
+    user_id     = Column(UUID(as_uuid=True), nullable=False)
+    person_name = Column(String(200), nullable=False)
+    amount      = Column(Numeric, nullable=False)
+    description = Column(Text, nullable=True)
+    direction   = Column(String(10), nullable=False, default="lent")  # "lent" | "borrowed"
+    due_date    = Column(Date, nullable=True)
+    is_settled  = Column(Boolean, nullable=False, default=False)
+    created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class Transfer(Base):
+    __tablename__ = "transfers"
+
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id         = Column(UUID(as_uuid=True), nullable=False)
+    from_account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    to_account_id   = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    amount          = Column(Numeric, nullable=False)
+    txn_date        = Column(Date, nullable=False)
+    note            = Column(Text, nullable=True)
+    created_at      = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class DepositDetail(Base):
+    __tablename__ = "deposit_details"
+
+    id                        = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id                = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), unique=True, nullable=False)
+    principal_amount          = Column(Numeric, nullable=False)
+    monthly_installment       = Column(Numeric, nullable=True)   # RD only
+    interest_rate             = Column(Numeric, nullable=False)  # annual %
+    tenure_months             = Column(Integer, nullable=False)
+    maturity_amount           = Column(Numeric, nullable=True)
+    maturity_date             = Column(Date, nullable=True)
+    start_date                = Column(Date, nullable=True)
+    is_closed                 = Column(Boolean, nullable=False, default=False)
+    closing_amount            = Column(Numeric, nullable=True)
+    closed_date               = Column(Date, nullable=True)
+    transferred_to_account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True)
+    created_at                = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

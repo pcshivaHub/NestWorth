@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity,
+  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -26,40 +26,75 @@ const BREAKUP_PERIODS = [
 function CategoryBreakup({ title, items = [], color }) {
   const { colors: C } = useTheme();
   const styles = useMemo(() => makeStyles(C), [C]);
+
+  const empty = <Text style={styles.breakupEmpty}>No category data yet</Text>;
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.breakupBlock}>
+        <Text style={styles.accountsLabel}>{title}</Text>
+        {items.length === 0 ? empty : (
+          <View style={styles.budgetGrid}>
+            {items.map((item) => {
+              const hasBudget = item.budget > 0;
+              const pct = hasBudget ? Math.min(item.amount / item.budget, 1) : 0;
+              const barColor = pct < 0.6 ? C.income : pct < 0.85 ? C.warning : C.expense;
+              const isOver = hasBudget && pct >= 1;
+              return (
+                <View key={item.category_id || item.category_name} style={styles.budgetTile}>
+                  <Text style={styles.tileName} numberOfLines={1}>
+                    {item.category_name || 'Uncategorized'}{isOver ? ' ⚠' : ''}
+                  </Text>
+                  <Text style={[styles.tileAmount, { color }]}>{formatCurrency(item.amount)}</Text>
+                  {hasBudget && (
+                    <>
+                      <View style={styles.budgetBarTrack}>
+                        <View style={[styles.budgetBarFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: barColor }]} />
+                      </View>
+                      <Text style={[styles.budgetBarLabel, { color: barColor }]}>
+                        {Math.round(pct * 100)}% of {formatCurrency(item.budget)}
+                      </Text>
+                    </>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </View>
+    );
+  }
+
   return (
     <View style={styles.breakupBlock}>
       <Text style={styles.accountsLabel}>{title}</Text>
-      {items.length === 0 ? (
-        <Text style={styles.breakupEmpty}>No category data yet</Text>
-      ) : (
-        <View style={styles.accountsGrid}>
-          {items.map((item) => {
-            const hasBudget = item.budget > 0;
-            const pct = hasBudget ? Math.min(item.amount / item.budget, 1) : 0;
-            const barColor = pct < 0.6 ? C.income : pct < 0.85 ? C.warning : C.expense;
-            return (
-              <View key={item.category_id || item.category_name} style={styles.accountChip}>
-                <Text style={styles.accountChipIcon}>{getInitials(item.category_name || '?')}</Text>
-                <Text style={styles.accountChipName} numberOfLines={1}>
-                  {item.category_name || 'Uncategorized'}
+      {items.length === 0 ? empty : (
+        items.map((item) => {
+          const hasBudget = item.budget > 0;
+          const pct = hasBudget ? Math.min(item.amount / item.budget, 1) : 0;
+          const barColor = pct < 0.6 ? C.income : pct < 0.85 ? C.warning : C.expense;
+          const isOver = hasBudget && pct >= 1;
+          return (
+            <View key={item.category_id || item.category_name} style={styles.catRow}>
+              <View style={styles.catRowTop}>
+                <Text style={styles.catName} numberOfLines={1}>
+                  {item.category_name || 'Uncategorized'}{isOver ? '  ⚠' : ''}
                 </Text>
-                <Text style={[styles.accountChipBalance, { color }]}>
-                  {formatCurrency(item.amount)}
-                </Text>
-                {hasBudget && (
-                  <View style={styles.budgetBarWrap}>
-                    <View style={styles.budgetBarTrack}>
-                      <View style={[styles.budgetBarFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: barColor }]} />
-                    </View>
-                    <Text style={styles.budgetBarLabel}>
-                      {Math.round(pct * 100)}% of {formatCurrency(item.budget)}
-                    </Text>
-                  </View>
-                )}
+                <Text style={[styles.catAmount, { color }]}>{formatCurrency(item.amount)}</Text>
               </View>
-            );
-          })}
-        </View>
+              {hasBudget && (
+                <View style={styles.catBarRow}>
+                  <View style={styles.catBarTrack}>
+                    <View style={[styles.catBarFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: barColor }]} />
+                  </View>
+                  <Text style={[styles.catBarPct, { color: barColor }]}>
+                    {Math.round(pct * 100)}% of {formatCurrency(item.budget)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          );
+        })
       )}
     </View>
   );
@@ -133,61 +168,84 @@ export default function DashboardScreen({ navigation }) {
 
       {summary && (
         <Card style={styles.heroCard}>
-          {accounts.length > 0 && (
-            <>
-              <Text style={styles.accountsLabel}>ACCOUNT BALANCES</Text>
-              <View style={styles.accountsGrid}>
-                {accounts.map((acc) => (
-                  <TouchableOpacity
-                    key={acc.id}
-                    style={styles.accountChip}
-                    onPress={() => navigation.navigate('AccountDetail', { account: acc, balance: balances[acc.id] })}
-                  >
-                    <BankLogo name={acc.name} fallback={TYPE_ICONS[acc.type] || '💰'} size={30} style={styles.accountChipLogo} />
-                    <Text style={styles.accountChipName} numberOfLines={1}>{acc.name}</Text>
-                    <Text style={[styles.accountChipBalance, {
-                      color: (balances[acc.id] ?? acc.opening_balance ?? 0) >= 0 ? C.income : C.expense,
-                    }]}>
-                      {formatCurrency(balances[acc.id] ?? acc.opening_balance ?? 0)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <View style={styles.accountsDivider} />
-            </>
-          )}
-
           <View style={styles.heroLabelRow}>
             <View style={[styles.statIconBg, { backgroundColor: C.netBalance + '28' }]}>
               <Ionicons name="wallet-outline" size={15} color={C.netBalance} />
             </View>
             <Text style={styles.heroLabel}>NET BALANCE</Text>
           </View>
-          <Text style={[styles.heroAmount, { color: ENTITY_THEME.netBalance.color }]}>
+          <Text style={[styles.heroAmount, { color: ENTITY_THEME.netBalance.color, textAlign: 'center' }]}>
             {formatCurrency(summary.net)}
           </Text>
 
+          <View style={styles.breakupDivider} />
+
           <View style={styles.statsRow}>
-            <View style={styles.statItem}>
+            <View style={styles.statCard}>
               <View style={[styles.statIconBg, { backgroundColor: C.income + '28' }]}>
-                <Ionicons name="trending-up" size={16} color={C.income} />
+                <Ionicons name="trending-up" size={18} color={C.income} />
               </View>
-              <View>
-                <Text style={styles.statLabel}>{ENTITY_THEME.income.label}</Text>
-                <Text style={[styles.statAmount, { color: ENTITY_THEME.income.color }]}>{formatCurrency(summary.total_income)}</Text>
-              </View>
+              <Text style={styles.statLabel}>INCOME</Text>
+              <Text style={[styles.statAmount, { color: C.income }]} numberOfLines={1}>{formatCurrency(summary.total_income)}</Text>
             </View>
-            <View style={styles.divider} />
-            <View style={styles.statItem}>
+            <View style={styles.statDivider} />
+            <View style={styles.statCard}>
               <View style={[styles.statIconBg, { backgroundColor: C.expense + '28' }]}>
-                <Ionicons name="trending-down" size={16} color={C.expense} />
+                <Ionicons name="trending-down" size={18} color={C.expense} />
               </View>
-              <View>
-                <Text style={styles.statLabel}>{ENTITY_THEME.expense.label}</Text>
-                <Text style={[styles.statAmount, { color: ENTITY_THEME.expense.color }]}>{formatCurrency(summary.total_expense)}</Text>
-              </View>
+              <Text style={styles.statLabel}>EXPENSES</Text>
+              <Text style={[styles.statAmount, { color: C.expense }]} numberOfLines={1}>{formatCurrency(summary.total_expense)}</Text>
             </View>
           </View>
+
+          {accounts.length > 0 && (
+            <>
+              <View style={styles.breakupDivider} />
+              <Text style={styles.accountsLabel}>ACCOUNT BALANCES</Text>
+              {Platform.OS === 'web' ? (
+                <View style={styles.accountsGrid}>
+                  {accounts.map((acc) => (
+                    <TouchableOpacity
+                      key={acc.id}
+                      style={styles.accountChip}
+                      onPress={() => navigation.navigate('AccountDetail', { account: acc, balance: balances[acc.id] })}
+                    >
+                      <BankLogo name={acc.name} fallback={TYPE_ICONS[acc.type] || '💰'} size={30} style={styles.accountChipLogo} />
+                      <Text style={styles.accountChipName} numberOfLines={1}>{acc.name}</Text>
+                      <Text style={[styles.accountChipBalance, {
+                        color: (balances[acc.id] ?? acc.opening_balance ?? 0) >= 0 ? C.income : C.expense,
+                      }]} numberOfLines={1} adjustsFontSizeToFit>
+                        {formatCurrency(balances[acc.id] ?? acc.opening_balance ?? 0)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountsScrollMobile}>
+                  {accounts.map((acc) => (
+                    <TouchableOpacity
+                      key={acc.id}
+                      style={styles.accountChipMobile}
+                      onPress={() => navigation.navigate('AccountDetail', { account: acc, balance: balances[acc.id] })}
+                    >
+                      <BankLogo name={acc.name} fallback={TYPE_ICONS[acc.type] || '💰'} size={28} style={styles.accountChipLogo} />
+                      <Text style={styles.accountChipName} numberOfLines={1}>{acc.name}</Text>
+                      <Text
+                        style={[styles.accountChipBalance, {
+                          color: (balances[acc.id] ?? acc.opening_balance ?? 0) >= 0 ? C.income : C.expense,
+                        }]}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.7}
+                      >
+                        {formatCurrency(balances[acc.id] ?? acc.opening_balance ?? 0)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+            </>
+          )}
 
           <View style={styles.breakupDivider} />
           <View style={styles.periodRow}>
@@ -217,18 +275,25 @@ export default function DashboardScreen({ navigation }) {
         </Card>
       )}
 
-      <View style={styles.quickActions}>
-        {[
-          { label: 'Transactions', icon: '🧾', tab: 'Transactions' },
-          { label: 'Accounts', icon: '🏦', tab: 'Accounts' },
-          { label: 'Categories', icon: '🏷️', tab: 'Categories' },
-        ].map((action) => (
-          <TouchableOpacity key={action.tab} style={styles.actionBtn} onPress={() => navigation.navigate(action.tab)}>
-            <Text style={styles.actionIcon}>{action.icon}</Text>
-            <Text style={styles.actionLabel}>{action.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      {Platform.OS === 'web' ? (
+        <View style={styles.quickActions}>
+          {[
+            { label: 'Transactions', icon: '🧾', tab: 'Transactions' },
+            { label: 'Accounts', icon: '🏦', tab: 'Accounts' },
+            { label: 'Categories', icon: '🏷️', tab: 'Categories' },
+          ].map((action) => (
+            <TouchableOpacity key={action.tab} style={styles.actionBtn} onPress={() => navigation.navigate(action.tab)}>
+              <Text style={styles.actionIcon}>{action.icon}</Text>
+              <Text style={styles.actionLabel}>{action.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : (
+        <TouchableOpacity style={styles.addTxnBtn} onPress={() => navigation.navigate('AddTransaction')}>
+          <Ionicons name="add-circle-outline" size={20} color="#fff" />
+          <Text style={styles.addTxnLabel}>Add Transaction</Text>
+        </TouchableOpacity>
+      )}
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Recent Transactions</Text>
@@ -281,14 +346,14 @@ const makeStyles = (C) => StyleSheet.create({
 
   heroCard: { marginBottom: SPACING.md, padding: SPACING.lg },
   heroLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, letterSpacing: 2, fontWeight: '600' },
-  heroAmount: { fontSize: FONTS.sizes.xxl, fontWeight: '800', marginTop: 4, marginBottom: SPACING.md },
-  heroLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
-  statsRow: { flexDirection: 'row', alignItems: 'center' },
-  statItem: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  statIconBg: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  statLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs },
-  statAmount: { fontSize: FONTS.sizes.lg, fontWeight: '800', marginTop: 2 },
-  divider: { width: 1, height: 36, backgroundColor: C.border, marginHorizontal: SPACING.md },
+  heroAmount: { fontSize: FONTS.sizes.xxl, fontWeight: '800', marginTop: 4 },
+  heroLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 2 },
+  statsRow: { flexDirection: 'row', alignItems: 'stretch' },
+  statCard: { flex: 1, alignItems: 'center', paddingVertical: SPACING.sm },
+  statIconBg: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  statLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, letterSpacing: 1.5, fontWeight: '600', marginBottom: 4, textAlign: 'center' },
+  statAmount: { fontSize: FONTS.sizes.xl, fontWeight: '800', textAlign: 'center' },
+  statDivider: { width: 1, backgroundColor: C.border, marginHorizontal: SPACING.md },
   breakupDivider: { height: 1, backgroundColor: C.border, marginVertical: SPACING.md },
 
   periodRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm },
@@ -299,23 +364,38 @@ const makeStyles = (C) => StyleSheet.create({
 
   breakupBlock: { marginTop: SPACING.md },
   breakupEmpty: { color: C.textMuted, fontSize: FONTS.sizes.xs, paddingVertical: SPACING.sm },
+  catRow: { marginBottom: SPACING.sm },
+  catRowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  catName: { color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600', flex: 1 },
+  catAmount: { fontSize: FONTS.sizes.sm, fontWeight: '700', marginLeft: SPACING.sm },
+  catBarRow: { gap: 3 },
+  catBarTrack: { height: 4, borderRadius: 2, backgroundColor: C.border, overflow: 'hidden' },
+  catBarFill: { height: '100%', borderRadius: 2 },
+  catBarPct: { fontSize: FONTS.sizes.xs, fontWeight: '600' },
+
+  budgetGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginTop: SPACING.xs },
+  budgetTile: { backgroundColor: C.surfaceHigh, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: C.border, padding: SPACING.sm, alignItems: 'center', minWidth: 110, flex: 1 },
+  tileName: { color: C.textSecondary, fontSize: FONTS.sizes.xs, fontWeight: '600', marginBottom: 4, textAlign: 'center' },
+  tileAmount: { fontSize: FONTS.sizes.md, fontWeight: '800', marginBottom: 6, textAlign: 'center' },
+  budgetBarTrack: { height: 4, borderRadius: 2, backgroundColor: C.border, overflow: 'hidden', alignSelf: 'stretch' },
+  budgetBarFill: { height: '100%', borderRadius: 2 },
+  budgetBarLabel: { fontSize: FONTS.sizes.xs, marginTop: 3, textAlign: 'center' },
   accountsDivider: { height: 1, backgroundColor: C.border, marginVertical: SPACING.md },
   accountsLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, letterSpacing: 2, fontWeight: '600', marginBottom: SPACING.sm },
   accountsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
   accountChip: { backgroundColor: C.surfaceHigh, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: C.border, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, alignItems: 'center', minWidth: 110, flex: 1 },
+  accountsScrollMobile: { marginHorizontal: -SPACING.sm },
+  accountChipMobile: { backgroundColor: C.surfaceHigh, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: C.border, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, alignItems: 'center', width: 130, marginHorizontal: SPACING.xs },
   accountChipLogo: { marginBottom: 4 },
-  accountChipIcon: { fontSize: 20, marginBottom: 4 },
   accountChipName: { color: C.textSecondary, fontSize: FONTS.sizes.xs, fontWeight: '600', marginBottom: 4 },
   accountChipBalance: { fontSize: FONTS.sizes.md, fontWeight: '800' },
-  budgetBarWrap: { alignSelf: 'stretch', marginTop: 6 },
-  budgetBarTrack: { height: 4, borderRadius: 2, backgroundColor: C.border, overflow: 'hidden' },
-  budgetBarFill: { height: '100%', borderRadius: 2 },
-  budgetBarLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 3, textAlign: 'center' },
 
   quickActions: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.lg },
   actionBtn: { flex: 1, backgroundColor: C.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: C.border, alignItems: 'center', padding: SPACING.md },
   actionIcon: { fontSize: 22, marginBottom: 4 },
   actionLabel: { color: C.textSecondary, fontSize: FONTS.sizes.xs, textAlign: 'center', lineHeight: 16 },
+  addTxnBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, backgroundColor: C.primary, borderRadius: RADIUS.full, paddingVertical: SPACING.sm + 2, marginBottom: SPACING.lg, shadowColor: C.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 6 },
+  addTxnLabel: { color: '#fff', fontSize: FONTS.sizes.md, fontWeight: '700' },
 
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm },
   sectionTitle: { color: C.textPrimary, fontSize: FONTS.sizes.lg, fontWeight: '700' },

@@ -10,11 +10,15 @@ from schemas import (
     AccountCreate, AccountResponse,
     CategoryCreate, CategoryResponse,
     TransactionCreate,
-    SummaryResponse, BalanceResponse,
+    SummaryResponse, BalanceResponse, AccountBalanceHistoryResponse,
+    DepositDetailCreate, DepositDetailResponse, CloseDepositRequest,
     FamilyCreate, JoinFamilyRequest, FamilyResponse, NewInviteCodeResponse,
     TrendResponse, CategoryBreakdownResponse, BudgetVsActualResponse,
     NetWorthTrendResponse, FamilyBreakdownResponse,
     AssetCreate, AssetResponse, AssetPortfolioResponse,
+    OutstandingCreate, OutstandingResponse, OutstandingsSummary,
+    NetWorthSnapshotResponse, ExpenseCategoryTrendsResponse,
+    TransferCreate, TransferResponse,
 )
 from auth import get_current_user
 import crud
@@ -173,6 +177,59 @@ def get_account_balance(
     if not result:
         raise HTTPException(status_code=404, detail="Account not found")
     return result
+
+
+@app.get("/accounts/{account_id}/balance-history", response_model=AccountBalanceHistoryResponse)
+def get_account_balance_history(
+    account_id: UUID,
+    months: int = 6,
+    ctx: Tuple[Session, str] = Depends(get_ctx),
+):
+    db, user_id = ctx
+    history = crud.get_account_balance_history(db, account_id, user_id, months)
+    if history is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return {"history": history}
+
+
+@app.post("/accounts/{account_id}/deposit", response_model=DepositDetailResponse, status_code=201)
+def create_deposit_detail(
+    account_id: UUID,
+    data: DepositDetailCreate,
+    ctx: Tuple[Session, str] = Depends(get_ctx),
+):
+    db, user_id = ctx
+    account = crud.get_account(db, account_id, user_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return crud.create_deposit_detail(db, account_id, data, account.type)
+
+
+@app.get("/accounts/{account_id}/deposit", response_model=DepositDetailResponse)
+def get_deposit_detail(
+    account_id: UUID,
+    ctx: Tuple[Session, str] = Depends(get_ctx),
+):
+    db, user_id = ctx
+    if not crud.get_account(db, account_id, user_id):
+        raise HTTPException(status_code=404, detail="Account not found")
+    detail = crud.get_deposit_detail(db, account_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="No deposit record found")
+    return detail
+
+
+@app.post("/accounts/{account_id}/deposit/close", response_model=DepositDetailResponse)
+def close_deposit(
+    account_id: UUID,
+    data: CloseDepositRequest,
+    ctx: Tuple[Session, str] = Depends(get_ctx),
+):
+    db, user_id = ctx
+    try:
+        return crud.close_deposit(db, account_id, data, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.put("/accounts/{account_id}", response_model=AccountResponse)
@@ -350,6 +407,100 @@ def report_family_breakdown(period: str = "month", ctx: Tuple[Session, str] = De
 def report_asset_portfolio(ctx: Tuple[Session, str] = Depends(get_ctx)):
     db, uid = ctx
     return crud.get_asset_portfolio(db, uid)
+
+
+@app.get("/reports/net-worth-snapshot", response_model=NetWorthSnapshotResponse)
+def report_net_worth_snapshot(ctx: Tuple[Session, str] = Depends(get_ctx)):
+    db, uid = ctx
+    return crud.get_net_worth_snapshot(db, uid)
+
+
+@app.get("/reports/expense-category-trends", response_model=ExpenseCategoryTrendsResponse)
+def report_expense_category_trends(months: int = 6, ctx: Tuple[Session, str] = Depends(get_ctx)):
+    db, uid = ctx
+    if months not in (6, 12):
+        raise HTTPException(status_code=400, detail="months must be 6 or 12")
+    return crud.get_expense_category_trends(db, uid, months=months)
+
+
+# ─────────────────────────────────────────
+# OUTSTANDINGS
+# ─────────────────────────────────────────
+
+@app.get("/outstandings", response_model=OutstandingsSummary)
+def get_outstandings(settled: bool = False, ctx: Tuple[Session, str] = Depends(get_ctx)):
+    db, uid = ctx
+    items = crud.get_outstandings(db, uid, settled=settled)
+    total_lent     = sum(float(o.amount) for o in items if o.direction == "lent")
+    total_borrowed = sum(float(o.amount) for o in items if o.direction == "borrowed")
+    return {
+        "total_lent": round(total_lent, 2),
+        "total_borrowed": round(total_borrowed, 2),
+        "net_outstanding": round(total_lent - total_borrowed, 2),
+        "items": items,
+    }
+
+
+@app.post("/outstandings", response_model=OutstandingResponse, status_code=201)
+def create_outstanding(data: OutstandingCreate, ctx: Tuple[Session, str] = Depends(get_ctx)):
+    db, uid = ctx
+    if data.direction not in ("lent", "borrowed"):
+        raise HTTPException(status_code=400, detail="direction must be 'lent' or 'borrowed'")
+    return crud.create_outstanding(db, data, uid)
+
+
+@app.post("/outstandings/{outstanding_id}/settle", response_model=OutstandingResponse)
+def settle_outstanding(outstanding_id: UUID, ctx: Tuple[Session, str] = Depends(get_ctx)):
+    db, uid = ctx
+    try:
+        return crud.settle_outstanding(db, outstanding_id, uid)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.delete("/outstandings/{outstanding_id}")
+def delete_outstanding(outstanding_id: UUID, ctx: Tuple[Session, str] = Depends(get_ctx)):
+    db, uid = ctx
+    crud.delete_outstanding(db, outstanding_id, uid)
+    return {"message": "Deleted"}
+
+
+# ─────────────────────────────────────────
+# TRANSFERS
+# ─────────────────────────────────────────
+
+@app.post("/transfers", response_model=TransferResponse, status_code=201)
+def create_transfer(
+    data: TransferCreate,
+    ctx: Tuple[Session, str] = Depends(get_ctx),
+):
+    db, user_id = ctx
+    if data.from_account_id == data.to_account_id:
+        raise HTTPException(status_code=400, detail="Cannot transfer to the same account")
+    if data.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    return crud.create_transfer(db, data, user_id)
+
+
+@app.get("/accounts/{account_id}/transfers", response_model=List[TransferResponse])
+def get_account_transfers(
+    account_id: UUID,
+    ctx: Tuple[Session, str] = Depends(get_ctx),
+):
+    db, user_id = ctx
+    if not crud.get_account(db, account_id, user_id):
+        raise HTTPException(status_code=404, detail="Account not found")
+    return crud.get_transfers_for_account(db, account_id, user_id)
+
+
+@app.delete("/transfers/{transfer_id}")
+def delete_transfer(
+    transfer_id: UUID,
+    ctx: Tuple[Session, str] = Depends(get_ctx),
+):
+    db, user_id = ctx
+    crud.delete_transfer(db, transfer_id, user_id)
+    return {"message": "Transfer deleted"}
 
 
 # ─────────────────────────────────────────

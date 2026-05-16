@@ -4,15 +4,26 @@
     "slug": "nestworth",
     "version": "1.0.0",
     "orientation": "portrait",
-    "backgroundColor": "#0F1117",
+    "backgroundColor": "#000000",
     "userInterfaceStyle": "dark",
+    "icon": "./assets/nestworth-icon.png",
+    "splash": {
+      "image": "./assets/nestworth-logo-banner.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#6C63FF"
+        "foregroundImage": "./assets/nestworth-icon.png",
+        "backgroundColor": "#000000"
       }
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "icon": "./assets/nestworth-icon.png"
+    },
+    "web": {
+      "favicon": "./assets/nestworth-icon.png"
     }
   }
 }
