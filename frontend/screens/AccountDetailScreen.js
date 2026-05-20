@@ -3,18 +3,20 @@ import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   Alert, ScrollView, Modal, Dimensions,
 } from 'react-native';
-import { LineChart } from 'react-native-gifted-charts';
+import { LineChart, BarChart } from 'react-native-gifted-charts';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
-import { formatCurrency, formatDate } from '../utils/helpers';
+import { useAuth } from '../context/AuthContext';
+import { formatCurrency, formatDate, getMemberName } from '../utils/helpers';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import apiClient from '../api/config';
 import BankLogo from '../components/BankLogo';
+import TypeIcon from '../components/TypeIcon';
 import { getAccountBalanceHistory, getAccounts, getDepositDetail, closeDeposit } from '../api/accounts';
+import { getTransactions } from '../api/transactions';
 
 const ACCOUNT_TYPES = ['savings', 'checking', 'cash', 'credit', 'fd', 'rd'];
-const TYPE_ICONS = { savings: '🏦', checking: '💳', cash: '💵', credit: '🔖', fd: '📅', rd: '🔄' };
 const DEPOSIT_TYPES = ['fd', 'rd'];
 const HISTORY_PERIODS = [{ key: 3, label: '3M' }, { key: 6, label: '6M' }, { key: 12, label: '1Y' }];
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -23,12 +25,16 @@ const CHART_WIDTH = SCREEN_WIDTH - SPACING.md * 2 - 32;
 export default function AccountDetailScreen({ route, navigation }) {
   const { colors: C } = useTheme();
   const styles = useMemo(() => makeStyles(C), [C]);
+  const { user, family } = useAuth();
 
   const { account, balance } = route.params;
   const isDeposit = DEPOSIT_TYPES.includes(account.type);
+  const isCC = account.type === 'credit';
+  const familyMembers = family?.members || [];
+  const isFamily = familyMembers.length > 1;
 
   const [editModal, setEditModal] = useState(false);
-  const [form, setForm] = useState({ name: account.name, type: account.type, opening_balance: String(account.opening_balance) });
+  const [form, setForm] = useState({ name: account.name, type: account.type, opening_balance: String(account.opening_balance), user_id: account.user_id || null });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -41,6 +47,10 @@ export default function AccountDetailScreen({ route, navigation }) {
   const [savingsAccounts, setSavingsAccounts] = useState([]);
   const [closeForm, setCloseForm] = useState({ closing_amount: '', transferred_to_account_id: '', closed_date: '' });
   const [closing, setClosing] = useState(false);
+
+  const [accountTxns, setAccountTxns] = useState([]);
+  const [txnPeriod, setTxnPeriod] = useState('month');
+  const [txnLoading, setTxnLoading] = useState(false);
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -55,6 +65,21 @@ export default function AccountDetailScreen({ route, navigation }) {
   }, [account.id, historyMonths]);
 
   useEffect(() => { loadHistory(); }, [loadHistory]);
+
+  const loadTxns = useCallback(async () => {
+    setTxnLoading(true);
+    try {
+      const list = await getTransactions({ account_id: account.id });
+      // Client-side guard: ensure only this account's transactions are shown
+      setAccountTxns((list || []).filter((tx) => tx.account_id === account.id));
+    } catch {
+      setAccountTxns([]);
+    } finally {
+      setTxnLoading(false);
+    }
+  }, [account.id]);
+
+  useEffect(() => { loadTxns(); }, [loadTxns]);
 
   useEffect(() => {
     if (!isDeposit) return;
@@ -72,11 +97,42 @@ export default function AccountDetailScreen({ route, navigation }) {
   const minVal = useMemo(() => Math.min(...lineData.map((d) => d.value), 0), [lineData]);
   const maxVal = useMemo(() => Math.max(...lineData.map((d) => d.value), 0), [lineData]);
 
+  const monthlySpending = useMemo(() => {
+    if (!isCC) return [];
+    const now = new Date();
+    return Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+      const yr = d.getFullYear(); const mo = d.getMonth();
+      const value = accountTxns
+        .filter((tx) => {
+          const td = new Date(tx.txn_date);
+          return tx.type === 'expense' && td.getFullYear() === yr && td.getMonth() === mo;
+        })
+        .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+      return { value, label: d.toLocaleString('default', { month: 'short' }), frontColor: C.expense };
+    });
+  }, [accountTxns, isCC, C.expense]);
+
+  const filteredTxns = useMemo(() => {
+    const now = new Date();
+    return accountTxns.filter((tx) => {
+      const d = new Date(tx.txn_date);
+      if (txnPeriod === 'week') {
+        const cut = new Date(now); cut.setDate(cut.getDate() - 7); return d >= cut;
+      }
+      if (txnPeriod === 'month') {
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      }
+      if (txnPeriod === 'year') return d.getFullYear() === now.getFullYear();
+      return true;
+    });
+  }, [accountTxns, txnPeriod]);
+
   const handleEdit = async () => {
     if (!form.name.trim()) return Alert.alert('Validation', 'Name is required.');
     setSaving(true);
     try {
-      await apiClient.put(`/accounts/${account.id}`, { name: form.name.trim(), type: form.type, opening_balance: parseFloat(form.opening_balance) || 0 });
+      await apiClient.put(`/accounts/${account.id}`, { name: form.name.trim(), type: form.type, opening_balance: parseFloat(form.opening_balance) || 0, user_id: form.user_id || null });
       setEditModal(false);
       navigation.goBack();
     } catch (e) {
@@ -124,6 +180,9 @@ export default function AccountDetailScreen({ route, navigation }) {
   const isPositive = currentBalance >= 0;
   const chartColor = isPositive ? C.income : C.expense;
 
+  const currentOwner = familyMembers.find((m) => String(m.user_id) === String(account.user_id));
+  const currentOwnerName = currentOwner ? getMemberName(currentOwner, user) : 'Unassigned';
+
   const daysToMaturity = deposit?.maturity_date
     ? Math.ceil((new Date(deposit.maturity_date) - new Date()) / 86400000)
     : null;
@@ -140,8 +199,9 @@ export default function AccountDetailScreen({ route, navigation }) {
           {formatCurrency(currentBalance)}
         </Text>
         <View style={styles.row}>
-          <View style={styles.typePill}>
-            <Text style={styles.typeText}>{TYPE_ICONS[account.type] || '💰'} {account.type.toUpperCase()}</Text>
+          <View style={[styles.typePill, styles.typePillContent]}>
+            <TypeIcon type={account.type} size={13} color={C.textSecondary} />
+            <Text style={styles.typeText}>{account.type.toUpperCase()}</Text>
           </View>
         </View>
       </Card>
@@ -208,23 +268,86 @@ export default function AccountDetailScreen({ route, navigation }) {
         </Card>
       )}
 
-      {/* Balance history chart */}
-      <Card style={styles.historyCard}>
+      {/* Transactions for this account */}
+      <Card style={styles.txnCard}>
         <View style={styles.historyHeader}>
-          <Text style={styles.sectionLabel}>BALANCE HISTORY</Text>
+          <Text style={styles.sectionLabel}>{isCC ? 'CC STATEMENT' : 'TRANSACTIONS'}</Text>
           <View style={styles.periodRow}>
-            {HISTORY_PERIODS.map((p) => (
+            {[{ key: 'week', label: '7D' }, { key: 'month', label: '1M' }, { key: 'year', label: '1Y' }].map((p) => (
               <TouchableOpacity
                 key={p.key}
-                style={[styles.periodChip, historyMonths === p.key && styles.periodChipActive]}
-                onPress={() => setHistoryMonths(p.key)}
+                style={[styles.periodChip, txnPeriod === p.key && styles.periodChipActive]}
+                onPress={() => setTxnPeriod(p.key)}
               >
-                <Text style={[styles.periodChipText, historyMonths === p.key && styles.periodChipTextActive]}>{p.label}</Text>
+                <Text style={[styles.periodChipText, txnPeriod === p.key && styles.periodChipTextActive]}>{p.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
         </View>
-        {historyLoading ? (
+        {txnLoading ? (
+          <Text style={styles.chartPlaceholder}>Loading…</Text>
+        ) : filteredTxns.length === 0 ? (
+          <Text style={styles.chartPlaceholder}>No transactions in this period</Text>
+        ) : (
+          filteredTxns.map((tx) => (
+            <TouchableOpacity key={tx.id} style={styles.txRow} onPress={() => navigation.navigate('TransactionDetail', { transaction: tx })} activeOpacity={0.7}>
+              <View style={[styles.txIconBg, { backgroundColor: tx.type === 'income' ? C.incomeSubtle : C.expenseSubtle }]}>
+                <Text style={{ color: tx.type === 'income' ? C.income : C.expense, fontSize: 14, fontWeight: '700' }}>
+                  {tx.type === 'income' ? '↑' : '↓'}
+                </Text>
+              </View>
+              <View style={styles.txInfo}>
+                <Text style={styles.txCategory}>{tx.category_name || '—'}</Text>
+                <Text style={styles.txMeta}>{formatDate(tx.txn_date)}{tx.note ? ` · ${tx.note}` : ''}</Text>
+              </View>
+              <Text style={[styles.txAmount, { color: tx.type === 'income' ? C.income : C.expense }]}>
+                {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
+              </Text>
+            </TouchableOpacity>
+          ))
+        )}
+      </Card>
+
+      {/* Chart — CC: monthly spending bar chart; others: balance history line chart */}
+      <Card style={styles.historyCard}>
+        <View style={styles.historyHeader}>
+          <Text style={styles.sectionLabel}>{isCC ? 'MONTHLY SPENDING' : 'BALANCE HISTORY'}</Text>
+          {!isCC && (
+            <View style={styles.periodRow}>
+              {HISTORY_PERIODS.map((p) => (
+                <TouchableOpacity
+                  key={p.key}
+                  style={[styles.periodChip, historyMonths === p.key && styles.periodChipActive]}
+                  onPress={() => setHistoryMonths(p.key)}
+                >
+                  <Text style={[styles.periodChipText, historyMonths === p.key && styles.periodChipTextActive]}>{p.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
+        {isCC ? (
+          monthlySpending.every((d) => d.value === 0) ? (
+            <Text style={styles.chartPlaceholder}>No spending data yet</Text>
+          ) : (
+            <BarChart
+              data={monthlySpending}
+              width={CHART_WIDTH} barWidth={32} spacing={16}
+              barBorderRadius={4}
+              yAxisTextStyle={{ color: C.textMuted, fontSize: 9 }}
+              xAxisColor={C.border} yAxisColor={C.border} rulesColor={C.border}
+              noOfSections={4}
+              formatYLabel={(v) => {
+                const n = parseFloat(v);
+                if (Math.abs(n) >= 100000) return `${(n / 100000).toFixed(1)}L`;
+                if (Math.abs(n) >= 1000) return `${(n / 1000).toFixed(0)}K`;
+                return String(Math.round(n));
+              }}
+              xAxisLabelTextStyle={{ color: C.textMuted, fontSize: 8 }}
+              isAnimated
+            />
+          )
+        ) : historyLoading ? (
           <Text style={styles.chartPlaceholder}>Loading…</Text>
         ) : lineData.length < 2 ? (
           <Text style={styles.chartPlaceholder}>Not enough data yet</Text>
@@ -283,12 +406,37 @@ export default function AccountDetailScreen({ route, navigation }) {
             <View style={styles.typeRow}>
               {ACCOUNT_TYPES.map((t) => (
                 <TouchableOpacity key={t} style={[styles.typeChip, form.type === t && styles.typeChipActive]} onPress={() => setForm({ ...form, type: t })}>
-                  <Text style={[styles.typeChipText, form.type === t && styles.typeChipTextActive]}>{TYPE_ICONS[t]} {t.toUpperCase()}</Text>
+                  <View style={styles.chipLabel}>
+                    <TypeIcon type={t} size={13} color={form.type === t ? C.primaryLight : C.textMuted} />
+                    <Text style={[styles.typeChipText, form.type === t && styles.typeChipTextActive]}>{t.toUpperCase()}</Text>
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
             <Text style={styles.label}>Opening Balance</Text>
             <TextInput style={styles.input} keyboardType="numeric" placeholderTextColor={C.textMuted} value={form.opening_balance} onChangeText={(v) => setForm({ ...form, opening_balance: v })} />
+            {isFamily && (
+              <>
+                <Text style={styles.label}>Belongs To</Text>
+                <View style={styles.belongsToBox}>
+                  <Text style={styles.belongsToText}>{currentOwnerName}</Text>
+                </View>
+                <Text style={styles.label}>Change To</Text>
+                <View style={styles.typeRow}>
+                  {familyMembers.map((m) => (
+                    <TouchableOpacity
+                      key={m.user_id}
+                      style={[styles.typeChip, form.user_id === m.user_id && styles.typeChipActive]}
+                      onPress={() => setForm({ ...form, user_id: m.user_id })}
+                    >
+                      <Text style={[styles.typeChipText, form.user_id === m.user_id && styles.typeChipTextActive]}>
+                        {getMemberName(m, user)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
             <View style={styles.modalBtns}>
               <Button title="Cancel" variant="outline" onPress={() => setEditModal(false)} style={styles.halfBtn} />
               <Button title="Save" onPress={handleEdit} loading={saving} style={styles.halfBtn} />
@@ -369,6 +517,7 @@ const makeStyles = (C) => StyleSheet.create({
   heroAmount: { fontSize: FONTS.sizes.hero, fontWeight: '800', marginVertical: SPACING.sm },
   row: { flexDirection: 'row' },
   typePill: { backgroundColor: C.surfaceHigh, borderRadius: RADIUS.full, paddingHorizontal: SPACING.md, paddingVertical: 4 },
+  typePillContent: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   typeText: { color: C.textSecondary, fontSize: FONTS.sizes.sm },
 
   depositCard: { marginBottom: SPACING.md, padding: SPACING.md },
@@ -392,6 +541,14 @@ const makeStyles = (C) => StyleSheet.create({
   periodChipTextActive: { color: C.primaryLight, fontWeight: '700' },
   chartPlaceholder: { color: C.textMuted, fontSize: FONTS.sizes.sm, textAlign: 'center', paddingVertical: SPACING.lg },
 
+  txnCard: { marginBottom: SPACING.md, padding: SPACING.md },
+  txRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
+  txIconBg: { width: 32, height: 32, borderRadius: RADIUS.sm, alignItems: 'center', justifyContent: 'center', marginRight: SPACING.sm },
+  txInfo: { flex: 1 },
+  txCategory: { color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600' },
+  txMeta: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 1 },
+  txAmount: { fontSize: FONTS.sizes.sm, fontWeight: '700' },
+
   infoCard: { marginBottom: SPACING.md },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: SPACING.sm },
   infoLabel: { color: C.textMuted, fontSize: FONTS.sizes.md },
@@ -409,10 +566,13 @@ const makeStyles = (C) => StyleSheet.create({
   label: { color: C.textSecondary, fontSize: FONTS.sizes.sm, marginBottom: 6, marginTop: SPACING.sm },
   input: { backgroundColor: C.surfaceHigh, borderRadius: RADIUS.md, borderWidth: 1, borderColor: C.border, color: C.textPrimary, padding: SPACING.sm + 4, fontSize: FONTS.sizes.md },
   typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  belongsToBox: { backgroundColor: C.surfaceHigh, borderRadius: RADIUS.md, borderWidth: 1, borderColor: C.border, padding: SPACING.sm + 4 },
+  belongsToText: { color: C.textPrimary, fontSize: FONTS.sizes.md, fontWeight: '600' },
   typeChip: { paddingHorizontal: SPACING.sm, paddingVertical: 6, borderRadius: RADIUS.full, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
   typeChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
   typeChipText: { color: C.textMuted, fontSize: FONTS.sizes.xs },
   typeChipTextActive: { color: C.primaryLight },
+  chipLabel: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   modalBtns: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.lg },
   halfBtn: { flex: 1 },
 

@@ -6,6 +6,7 @@ import {
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { getMemberName } from '../utils/helpers';
 import { leaveFamily } from '../api/family';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -135,12 +136,12 @@ export default function FamilyScreen({ navigation }) {
             <View style={styles.memberRow}>
               <View style={[styles.avatar, { backgroundColor: C.primary + '33' }]}>
                 <Text style={styles.avatarText}>
-                  {(m.display_name || 'M').charAt(0).toUpperCase()}
+                  {getMemberName(m, user).charAt(0).toUpperCase()}
                 </Text>
               </View>
               <View style={styles.memberInfo}>
                 <Text style={styles.memberName}>
-                  {m.display_name || (m.user_id === user?.id ? 'You' : 'Member')}
+                  {getMemberName(m, user)}
                 </Text>
                 <Text style={styles.memberJoined}>Joined {formatDate(m.joined_at)}</Text>
               </View>

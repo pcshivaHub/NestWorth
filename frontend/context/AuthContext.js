@@ -26,8 +26,6 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const handleSignedIn = useCallback(async (session) => {
-    // Keep loading=true so screens don't mount and fire API calls
-    // until the invite code is redeemed and family state is resolved.
     setLoading(true);
     setSession(session);
     setUser(session?.user ?? null);
@@ -38,8 +36,8 @@ export const AuthProvider = ({ children }) => {
         await joinFamily(pendingCode).catch(() => null);
       }
     } catch {}
-    await refreshFamily();
     setLoading(false);
+    refreshFamily(); // fetch family in background, doesn't block app render
   }, [refreshFamily]);
 
   useEffect(() => {

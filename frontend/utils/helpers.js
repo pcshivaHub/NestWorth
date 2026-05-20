@@ -23,3 +23,9 @@ export const getInitials = (name = '') =>
     .join('')
     .toUpperCase()
     .slice(0, 2);
+
+export const getMemberName = (m, user) =>
+  m.display_name ||
+  (m.user_id === user?.id
+    ? (user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email?.split('@')[0] || 'You')
+    : 'Family Member');

@@ -12,6 +12,7 @@ class AccountCreate(BaseModel):
     name: str
     type: str
     opening_balance: float = 0.0
+    user_id: Optional[UUID] = None
 
 
 class AccountResponse(BaseModel):

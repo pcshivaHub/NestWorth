@@ -5,13 +5,14 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getCategories, createCategory } from '../api/categories';
-import { FONTS, SPACING, RADIUS } from '../utils/theme';
+import { FONTS, SPACING, RADIUS, makeShadow } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
 import EmptyState from '../components/EmptyState';
+import { Tag } from 'phosphor-react-native';
 
 export default function CategoriesScreen({ navigation }) {
   const { colors: C } = useTheme();
@@ -79,7 +80,7 @@ export default function CategoriesScreen({ navigation }) {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.list}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
-        ListEmptyComponent={<EmptyState icon="🏷️" message="No categories yet. Tap + to add one!" />}
+        ListEmptyComponent={<EmptyState icon={<Tag size={48} color={C.textMuted} />} message="No categories yet. Tap + to add one!" />}
         ListHeaderComponent={
           <View style={styles.filterRow}>
             {['all', 'income', 'expense'].map((f) => (
@@ -168,7 +169,7 @@ const makeStyles = (C) => StyleSheet.create({
   filterActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
   filterText: { color: C.textMuted, fontSize: FONTS.sizes.sm },
   filterTextActive: { color: C.primaryLight, fontWeight: '600' },
-  fab: { position: 'absolute', bottom: 20, right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', shadowColor: C.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 8, elevation: 10 },
+  fab: { position: 'absolute', bottom: 20, right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', ...makeShadow(C.primary, { opacity: 0.5, elevation: 10 }) },
   fabIcon: { color: '#fff', fontSize: 28, lineHeight: 32 },
   catCard: { marginBottom: SPACING.sm, paddingVertical: SPACING.sm },
   row: { flexDirection: 'row', alignItems: 'center' },

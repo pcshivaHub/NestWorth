@@ -7,9 +7,9 @@ import { useFocusEffect } from '@react-navigation/native';
 import { getAccounts, createAccount, getAccountBalance, createDepositDetail, createTransfer } from '../api/accounts';
 import { getAssets, createAsset } from '../api/assets';
 import { getOutstandings, createOutstanding, settleOutstanding, deleteOutstanding } from '../api/outstandings';
-import { FONTS, SPACING, RADIUS } from '../utils/theme';
+import { FONTS, SPACING, RADIUS, makeShadow } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
-import { formatCurrency, formatDate } from '../utils/helpers';
+import { formatCurrency, formatDate, getMemberName } from '../utils/helpers';
 import { useAuth } from '../context/AuthContext';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -17,12 +17,10 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
 import EmptyState from '../components/EmptyState';
 import BankLogo from '../components/BankLogo';
+import TypeIcon from '../components/TypeIcon';
+import { Bank, Briefcase, Handshake } from 'phosphor-react-native';
 
 const ACCOUNT_TYPES = ['savings', 'checking', 'cash', 'credit', 'fd', 'rd', 'mutual_fund', 'equity', 'lic', 'ppf', 'nps'];
-const TYPE_ICONS = {
-  savings: '🏦', checking: '💳', cash: '💵', credit: '🔖', fd: '📅', rd: '🔄',
-  mutual_fund: '📊', equity: '📈', lic: '🛡️', ppf: '🏛️', nps: '🎯',
-};
 const TYPE_LABELS = {
   savings: 'Savings', checking: 'Checking', cash: 'Cash', credit: 'Credit Card',
   fd: 'Fixed Deposit', rd: 'Recurring Deposit',
@@ -30,19 +28,9 @@ const TYPE_LABELS = {
   ppf: 'PPF', nps: 'NPS',
 };
 const DEPOSIT_TYPES = ['fd', 'rd'];
-const INVESTMENT_TYPES = ['mutual_fund', 'equity', 'lic', 'ppf', 'nps'];
 const EMPTY_TRANSFER_FORM = { from_account_id: '', to_account_id: '', amount: '', txn_date: '', note: '' };
 
-const ASSET_TYPES = {
-  real_estate:   '🏠',
-  gold:          '🪙',
-  jewelry:       '💍',
-  vehicle:       '🚗',
-  stocks:        '📈',
-  mutual_fund:   '📊',
-  fixed_deposit: '🏦',
-  other:         '💼',
-};
+const ASSET_TYPE_KEYS = ['real_estate', 'gold', 'jewelry', 'vehicle', 'stocks', 'mutual_fund', 'fixed_deposit', 'other'];
 
 const EMPTY_ASSET_FORM = {
   name: '', asset_type: 'gold', purchase_price: '',
@@ -59,7 +47,7 @@ export default function AccountsScreen({ navigation }) {
   const { user, family } = useAuth();
 
   const memberMap = Object.fromEntries(
-    (family?.members || []).map((m) => [m.user_id, m.display_name || null])
+    (family?.members || []).map((m) => [m.user_id, getMemberName(m, user)])
   );
 
   const [section, setSection] = useState('accounts');
@@ -86,9 +74,14 @@ export default function AccountsScreen({ navigation }) {
   const [transferForm, setTransferForm] = useState(EMPTY_TRANSFER_FORM);
   const [savingTransfer, setSavingTransfer] = useState(false);
 
+  const [showMine, setShowMine] = useState(true);
+  const [acctTypeFilter, setAcctTypeFilter] = useState(null);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+
+  const isFamily = (family?.members?.length ?? 0) > 1;
 
   const load = async () => {
     try {
@@ -250,11 +243,47 @@ export default function AccountsScreen({ navigation }) {
     <View style={styles.screen}>
       {error && <ErrorBanner message={error} onRetry={load} />}
 
+      {isFamily && (
+        <View style={styles.ownerRow}>
+          {[{ key: true, label: 'Mine' }, { key: false, label: 'All Members' }].map((opt) => (
+            <TouchableOpacity
+              key={String(opt.key)}
+              style={[styles.ownerChip, showMine === opt.key && styles.ownerChipActive]}
+              onPress={() => setShowMine(opt.key)}
+            >
+              <Text style={[styles.ownerChipText, showMine === opt.key && styles.ownerChipTextActive]}>
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {section === 'accounts' && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.typeFilterRow} contentContainerStyle={styles.typeFilterContent}>
+          {[null, 'savings', 'checking', 'cash', 'credit', 'fd', 'rd', 'mutual_fund', 'equity', 'ppf', 'nps'].map((t) => {
+            const exists = t === null || accounts.some((a) => a.type === t);
+            if (!exists) return null;
+            return (
+              <TouchableOpacity
+                key={String(t)}
+                style={[styles.typeFilterChip, acctTypeFilter === t && styles.typeFilterChipActive]}
+                onPress={() => setAcctTypeFilter(acctTypeFilter === t ? null : t)}
+              >
+                <Text style={[styles.typeFilterChipText, acctTypeFilter === t && styles.typeFilterChipTextActive]}>
+                  {t === null ? 'All Types' : TYPE_LABELS[t] || t}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
+
       <View style={styles.sectionRow}>
         {[
-          { key: 'accounts',     label: '🏦 Accounts' },
-          { key: 'assets',       label: '💼 Assets' },
-          { key: 'outstandings', label: '🤝 Loans' },
+          { key: 'accounts',     label: 'Accounts' },
+          { key: 'assets',       label: 'Assets' },
+          { key: 'outstandings', label: 'Loans' },
         ].map((s) => (
           <TouchableOpacity
             key={s.key}
@@ -270,14 +299,14 @@ export default function AccountsScreen({ navigation }) {
 
       {section === 'accounts' ? (
         <FlatList
-          data={accounts}
+          data={(showMine && isFamily ? accounts.filter((a) => a.user_id === user?.id) : accounts).filter((a) => !acctTypeFilter || a.type === acctTypeFilter)}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
-          ListEmptyComponent={<EmptyState icon="🏦" message="No accounts yet. Tap + to add one!" />}
+          ListEmptyComponent={<EmptyState icon={<Bank size={48} color={C.textMuted} />} message="No accounts yet. Tap + to add one!" />}
           renderItem={({ item }) => {
             const isOther = item.user_id && item.user_id !== user?.id;
-            const ownerName = isOther ? (memberMap[item.user_id] || 'Member') : null;
+            const ownerName = isOther ? (memberMap[item.user_id] || 'Family Member') : null;
             return (
               <TouchableOpacity onPress={() => navigation.navigate('AccountDetail', { account: item, balance: balances[item.id] })}>
                 <Card style={styles.accountCard}>
@@ -287,7 +316,10 @@ export default function AccountsScreen({ navigation }) {
                       <Text style={styles.name}>{item.name}</Text>
                       <View style={styles.tagRow}>
                         <View style={styles.typePill}>
-                          <Text style={styles.typeText}>{TYPE_ICONS[item.type] || '💰'} {item.type}</Text>
+                          <View style={styles.typePillContent}>
+                            <TypeIcon type={item.type} size={11} color={C.textMuted} />
+                            <Text style={styles.typeText}>{item.type}</Text>
+                          </View>
                         </View>
                         {ownerName && (
                           <View style={styles.ownerPill}>
@@ -307,7 +339,7 @@ export default function AccountsScreen({ navigation }) {
         />
       ) : (
         <FlatList
-          data={assets}
+          data={showMine && isFamily ? assets.filter((a) => a.user_id === user?.id) : assets}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
@@ -317,7 +349,7 @@ export default function AccountsScreen({ navigation }) {
               <Text style={[styles.portfolioValue, { color: C.netBalance }]}>{formatCurrency(totalAssetValue)}</Text>
             </View>
           ) : null}
-          ListEmptyComponent={<EmptyState icon="💼" message="No assets yet. Tap + to add one!" />}
+          ListEmptyComponent={<EmptyState icon={<Briefcase size={48} color={C.textMuted} />} message="No assets yet. Tap + to add one!" />}
           renderItem={({ item }) => {
             const cv = parseFloat(item.current_value || 0);
             const pp = item.purchase_price != null ? parseFloat(item.purchase_price) : null;
@@ -328,7 +360,7 @@ export default function AccountsScreen({ navigation }) {
                 <Card style={styles.accountCard}>
                   <View style={styles.row}>
                     <View style={styles.assetIconWrap}>
-                      <Text style={styles.assetIcon}>{ASSET_TYPES[item.asset_type] || '💼'}</Text>
+                      <TypeIcon type={item.asset_type} size={22} color={C.primaryLight} />
                     </View>
                     <View style={styles.info}>
                       <Text style={styles.name}>{item.name}</Text>
@@ -359,7 +391,7 @@ export default function AccountsScreen({ navigation }) {
 
       {section === 'outstandings' && (
         <FlatList
-          data={outstandings.items}
+          data={showMine && isFamily ? outstandings.items.filter((i) => i.user_id === user?.id) : outstandings.items}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
@@ -393,7 +425,7 @@ export default function AccountsScreen({ navigation }) {
               </TouchableOpacity>
             </>
           )}
-          ListEmptyComponent={<EmptyState icon="🤝" message={showSettled ? 'No settled loans.' : 'No active loans. Tap + to add one!'} />}
+          ListEmptyComponent={<EmptyState icon={<Handshake size={48} color={C.textMuted} />} message={showSettled ? 'No settled loans.' : 'No active loans. Tap + to add one!'} />}
           renderItem={({ item }) => {
             const isLent = item.direction === 'lent';
             const isOverdue = item.due_date && !item.is_settled && new Date(item.due_date) < new Date();
@@ -473,9 +505,12 @@ export default function AccountsScreen({ navigation }) {
                   style={[styles.typeChip, accountForm.type === t && styles.typeChipActive]}
                   onPress={() => setAccountForm({ ...accountForm, type: t })}
                 >
-                  <Text style={[styles.typeChipText, accountForm.type === t && styles.typeChipTextActive]}>
-                    {TYPE_ICONS[t]} {TYPE_LABELS[t] || t.toUpperCase()}
-                  </Text>
+                  <View style={styles.chipLabel}>
+                    <TypeIcon type={t} size={13} color={accountForm.type === t ? C.primaryLight : C.textMuted} />
+                    <Text style={[styles.typeChipText, accountForm.type === t && styles.typeChipTextActive]}>
+                      {TYPE_LABELS[t] || t.toUpperCase()}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
@@ -603,15 +638,18 @@ export default function AccountsScreen({ navigation }) {
 
             <Text style={styles.label}>Type</Text>
             <View style={styles.chipRow}>
-              {Object.entries(ASSET_TYPES).map(([key, icon]) => (
+              {ASSET_TYPE_KEYS.map((key) => (
                 <TouchableOpacity
                   key={key}
                   style={[styles.typeChip, assetForm.asset_type === key && styles.typeChipActive]}
                   onPress={() => setAssetForm({ ...assetForm, asset_type: key })}
                 >
-                  <Text style={[styles.typeChipText, assetForm.asset_type === key && styles.typeChipTextActive]}>
-                    {icon} {key.replace('_', ' ')}
-                  </Text>
+                  <View style={styles.chipLabel}>
+                    <TypeIcon type={key} size={13} color={assetForm.asset_type === key ? C.primaryLight : C.textMuted} />
+                    <Text style={[styles.typeChipText, assetForm.asset_type === key && styles.typeChipTextActive]}>
+                      {key.replace('_', ' ')}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
@@ -677,9 +715,12 @@ export default function AccountsScreen({ navigation }) {
                   style={[styles.typeChip, transferForm.from_account_id === a.id && styles.typeChipActive]}
                   onPress={() => setTransferForm({ ...transferForm, from_account_id: a.id })}
                 >
-                  <Text style={[styles.typeChipText, transferForm.from_account_id === a.id && styles.typeChipTextActive]}>
-                    {TYPE_ICONS[a.type] || '🏦'} {a.name}
-                  </Text>
+                  <View style={styles.chipLabel}>
+                    <TypeIcon type={a.type} size={13} color={transferForm.from_account_id === a.id ? C.primaryLight : C.textMuted} />
+                    <Text style={[styles.typeChipText, transferForm.from_account_id === a.id && styles.typeChipTextActive]}>
+                      {a.name}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
@@ -692,9 +733,12 @@ export default function AccountsScreen({ navigation }) {
                   style={[styles.typeChip, transferForm.to_account_id === a.id && styles.typeChipActive]}
                   onPress={() => setTransferForm({ ...transferForm, to_account_id: a.id })}
                 >
-                  <Text style={[styles.typeChipText, transferForm.to_account_id === a.id && styles.typeChipTextActive]}>
-                    {TYPE_ICONS[a.type] || '🏦'} {a.name}
-                  </Text>
+                  <View style={styles.chipLabel}>
+                    <TypeIcon type={a.type} size={13} color={transferForm.to_account_id === a.id ? C.primaryLight : C.textMuted} />
+                    <Text style={[styles.typeChipText, transferForm.to_account_id === a.id && styles.typeChipTextActive]}>
+                      {a.name}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
@@ -742,6 +786,18 @@ const makeStyles = (C) => StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
   list: { padding: SPACING.md, paddingBottom: 80 },
 
+  ownerRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.md, paddingTop: SPACING.sm, paddingBottom: 4 },
+  typeFilterRow: { flexGrow: 0, paddingTop: 4, paddingBottom: 4 },
+  typeFilterContent: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.md },
+  typeFilterChip: { paddingHorizontal: SPACING.sm + 2, paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
+  typeFilterChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
+  typeFilterChipText: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '500' },
+  typeFilterChipTextActive: { color: C.primaryLight, fontWeight: '700' },
+  ownerChip: { paddingHorizontal: SPACING.md, paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
+  ownerChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
+  ownerChipText: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '600' },
+  ownerChipTextActive: { color: C.primaryLight },
+
   sectionRow: { flexDirection: 'row', gap: SPACING.sm, padding: SPACING.md, paddingBottom: SPACING.sm },
   sectionChip: {
     flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: RADIUS.full,
@@ -760,7 +816,7 @@ const makeStyles = (C) => StyleSheet.create({
     position: 'absolute', bottom: 20, right: 20,
     width: 56, height: 56, borderRadius: 28,
     backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center',
-    shadowColor: C.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 8, elevation: 10,
+    ...makeShadow(C.primary, { opacity: 0.5, elevation: 10 }),
   },
   fabTransfer: { bottom: 90, backgroundColor: C.income },
   fabIcon: { color: '#fff', fontSize: 26, lineHeight: 30 },
@@ -772,11 +828,12 @@ const makeStyles = (C) => StyleSheet.create({
     backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border,
     alignItems: 'center', justifyContent: 'center', marginRight: SPACING.sm,
   },
-  assetIcon: { fontSize: 22 },
+
   info: { flex: 1 },
   name: { color: C.textPrimary, fontSize: FONTS.sizes.md, fontWeight: '600' },
   tagRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 4 },
   typePill: { backgroundColor: C.surfaceHigh, borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 2 },
+  typePillContent: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   typeText: { color: C.textMuted, fontSize: FONTS.sizes.xs },
   ownerPill: { backgroundColor: C.primary + '22', borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 2 },
   ownerText: { color: C.primaryLight, fontSize: FONTS.sizes.xs, fontWeight: '600' },
@@ -829,6 +886,7 @@ const makeStyles = (C) => StyleSheet.create({
   typeChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
   typeChipText: { color: C.textMuted, fontSize: FONTS.sizes.xs },
   typeChipTextActive: { color: C.primaryLight },
+  chipLabel: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   modalBtns: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.lg },
   halfBtn: { flex: 1 },
 });

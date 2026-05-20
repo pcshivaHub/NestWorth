@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   Alert, ScrollView, Modal,
 } from 'react-native';
+import { ArrowUp, ArrowDown } from 'phosphor-react-native';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { formatCurrency, formatDate } from '../utils/helpers';
@@ -83,7 +84,9 @@ export default function TransactionDetailScreen({ route, navigation }) {
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Card style={styles.heroCard}>
         <View style={[styles.iconBg, { backgroundColor: transaction.type === 'income' ? C.incomeSubtle : C.expenseSubtle }]}>
-          <Text style={styles.icon}>{transaction.type === 'income' ? '↑' : '↓'}</Text>
+          {transaction.type === 'income'
+            ? <ArrowUp size={32} color={C.income} weight="bold" />
+            : <ArrowDown size={32} color={C.expense} weight="bold" />}
         </View>
         <Text style={[styles.heroAmount, { color: transaction.type === 'income' ? C.income : C.expense }]}>
           {transaction.type === 'income' ? '+' : '-'}{formatCurrency(transaction.amount)}
@@ -133,9 +136,14 @@ export default function TransactionDetailScreen({ route, navigation }) {
                     style={[styles.toggleBtn, form.type === t && { borderColor: t === 'income' ? C.income : C.expense, backgroundColor: t === 'income' ? C.incomeSubtle : C.expenseSubtle }]}
                     onPress={() => { set('type', t); set('category_id', null); }}
                   >
-                    <Text style={[styles.toggleText, form.type === t && { color: t === 'income' ? C.income : C.expense }]}>
-                      {t === 'income' ? '↑ Income' : '↓ Expense'}
-                    </Text>
+                    <View style={styles.toggleContent}>
+                      {t === 'income'
+                        ? <ArrowUp size={16} color={form.type === t ? C.income : C.textMuted} weight="bold" />
+                        : <ArrowDown size={16} color={form.type === t ? C.expense : C.textMuted} weight="bold" />}
+                      <Text style={[styles.toggleText, form.type === t && { color: t === 'income' ? C.income : C.expense }]}>
+                        {t === 'income' ? 'Income' : 'Expense'}
+                      </Text>
+                    </View>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -187,7 +195,6 @@ const makeStyles = (C) => StyleSheet.create({
   content: { padding: SPACING.md, paddingBottom: SPACING.xl },
   heroCard: { marginBottom: SPACING.md, padding: SPACING.lg, alignItems: 'center' },
   iconBg: { width: 64, height: 64, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', marginBottom: SPACING.sm },
-  icon: { color: '#fff', fontSize: 32, fontWeight: '700' },
   heroAmount: { fontSize: FONTS.sizes.hero, fontWeight: '800', marginBottom: 4 },
   heroCategory: { color: C.textSecondary, fontSize: FONTS.sizes.md },
   infoCard: { marginBottom: SPACING.md },
@@ -207,6 +214,7 @@ const makeStyles = (C) => StyleSheet.create({
   amountInput: { fontSize: FONTS.sizes.xl, fontWeight: '700', textAlign: 'center' },
   typeToggle: { flexDirection: 'row', gap: SPACING.sm },
   toggleBtn: { flex: 1, padding: SPACING.sm, borderRadius: RADIUS.md, borderWidth: 1, borderColor: C.border, alignItems: 'center', backgroundColor: C.surfaceHigh },
+  toggleContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   toggleText: { color: C.textMuted, fontWeight: '600', fontSize: FONTS.sizes.md },
   chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: SPACING.md, paddingVertical: 8, borderRadius: RADIUS.full, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.surfaceHigh, marginRight: 8, marginBottom: 4 },

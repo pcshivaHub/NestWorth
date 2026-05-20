@@ -11,20 +11,12 @@ import { useTheme } from '../context/ThemeContext';
 import { formatCurrency, formatDate } from '../utils/helpers';
 import Button from '../components/Button';
 import Card from '../components/Card';
+import TypeIcon from '../components/TypeIcon';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const CHART_WIDTH = SCREEN_WIDTH - SPACING.md * 2 - 32;
 
-const ASSET_TYPES = {
-  real_estate:   '🏠',
-  gold:          '🪙',
-  jewelry:       '💍',
-  vehicle:       '🚗',
-  stocks:        '📈',
-  mutual_fund:   '📊',
-  fixed_deposit: '🏦',
-  other:         '💼',
-};
+const ASSET_TYPE_KEYS = ['real_estate', 'gold', 'jewelry', 'vehicle', 'stocks', 'mutual_fund', 'fixed_deposit', 'other'];
 
 export default function AssetDetailScreen({ route, navigation }) {
   const { colors: C } = useTheme();
@@ -106,7 +98,9 @@ export default function AssetDetailScreen({ route, navigation }) {
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
 
       <Card style={styles.heroCard}>
-        <Text style={styles.heroIcon}>{ASSET_TYPES[asset.asset_type] || '💼'}</Text>
+        <View style={styles.heroIconWrap}>
+          <TypeIcon type={asset.asset_type} size={44} color={C.primaryLight} />
+        </View>
         <Text style={styles.heroName}>{asset.name}</Text>
         <Text style={styles.heroLabel}>CURRENT VALUE</Text>
         <Text style={[styles.heroAmount, { color: C.netBalance }]}>{formatCurrency(cv)}</Text>
@@ -120,7 +114,7 @@ export default function AssetDetailScreen({ route, navigation }) {
       </Card>
 
       <Card style={styles.infoCard}>
-        <InfoRow label="Type" value={`${ASSET_TYPES[asset.asset_type] || '💼'} ${asset.asset_type.replace('_', ' ')}`} styles={styles} />
+        <InfoRow label="Type" value={asset.asset_type.replace('_', ' ')} icon={<TypeIcon type={asset.asset_type} size={14} color={C.textMuted} />} styles={styles} />
         <View style={styles.divider} />
         <InfoRow label="Purchase Price" value={pp != null ? formatCurrency(pp) : '—'} styles={styles} />
         <View style={styles.divider} />
@@ -185,15 +179,18 @@ export default function AssetDetailScreen({ route, navigation }) {
 
             <Text style={styles.label}>Type</Text>
             <View style={styles.chipRow}>
-              {Object.entries(ASSET_TYPES).map(([key, icon]) => (
+              {ASSET_TYPE_KEYS.map((key) => (
                 <TouchableOpacity
                   key={key}
                   style={[styles.typeChip, form.asset_type === key && styles.typeChipActive]}
                   onPress={() => setForm({ ...form, asset_type: key })}
                 >
-                  <Text style={[styles.typeChipText, form.asset_type === key && styles.typeChipTextActive]}>
-                    {icon} {key.replace('_', ' ')}
-                  </Text>
+                  <View style={styles.chipLabel}>
+                    <TypeIcon type={key} size={13} color={form.asset_type === key ? C.primaryLight : C.textMuted} />
+                    <Text style={[styles.typeChipText, form.asset_type === key && styles.typeChipTextActive]}>
+                      {key.replace('_', ' ')}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
@@ -221,11 +218,18 @@ export default function AssetDetailScreen({ route, navigation }) {
   );
 }
 
-function InfoRow({ label, value, styles }) {
+function InfoRow({ label, value, icon, styles }) {
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue}>{value}</Text>
+      {icon ? (
+        <View style={styles.infoValueRow}>
+          {icon}
+          <Text style={styles.infoValue}>{value}</Text>
+        </View>
+      ) : (
+        <Text style={styles.infoValue}>{value}</Text>
+      )}
     </View>
   );
 }
@@ -235,7 +239,7 @@ const makeStyles = (C) => StyleSheet.create({
   content: { padding: SPACING.md, paddingBottom: SPACING.xl },
 
   heroCard: { marginBottom: SPACING.md, padding: SPACING.lg, alignItems: 'center' },
-  heroIcon: { fontSize: 52, marginBottom: SPACING.sm },
+  heroIconWrap: { marginBottom: SPACING.sm },
   heroName: { color: C.textPrimary, fontSize: FONTS.sizes.lg, fontWeight: '700', marginBottom: SPACING.sm, textAlign: 'center' },
   heroLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, letterSpacing: 2, fontWeight: '600' },
   heroAmount: { fontSize: FONTS.sizes.hero, fontWeight: '800', marginVertical: SPACING.sm },
@@ -243,8 +247,9 @@ const makeStyles = (C) => StyleSheet.create({
   gainChipText: { fontSize: FONTS.sizes.sm, fontWeight: '700' },
 
   infoCard: { marginBottom: SPACING.md },
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: SPACING.sm },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SPACING.sm },
   infoLabel: { color: C.textMuted, fontSize: FONTS.sizes.md },
+  infoValueRow: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '60%' },
   infoValue: { color: C.textPrimary, fontSize: FONTS.sizes.md, fontWeight: '600', textAlign: 'right', flex: 1, marginLeft: SPACING.md },
   divider: { height: 1, backgroundColor: C.border },
 
@@ -279,6 +284,7 @@ const makeStyles = (C) => StyleSheet.create({
   typeChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
   typeChipText: { color: C.textMuted, fontSize: FONTS.sizes.xs },
   typeChipTextActive: { color: C.primaryLight },
+  chipLabel: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   modalBtns: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.lg },
   halfBtn: { flex: 1 },
 });

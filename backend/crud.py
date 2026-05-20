@@ -278,6 +278,8 @@ def update_account(db: Session, account_id: UUID, data, user_id: str):
     obj.name = data.name
     obj.type = data.type
     obj.opening_balance = data.opening_balance
+    if data.user_id is not None:
+        obj.user_id = data.user_id
     db.commit()
     db.refresh(obj)
     return obj

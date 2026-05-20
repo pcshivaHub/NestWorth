@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import {
@@ -7,7 +8,7 @@ import {
   Modal, Animated, Pressable, ScrollView, Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { FONTS, RADIUS, SPACING } from '../utils/theme';
+import { FONTS, RADIUS, SPACING, makeShadow } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { logout } from '../api/auth';
@@ -84,6 +85,7 @@ const getDisplayName = (user) =>
 function HamburgerMenu({ navigation }) {
   const [open, setOpen] = useState(false);
   const { colors: C } = useTheme();
+  const { user } = useAuth();
   const slideAnim = useRef(new Animated.Value(-300)).current;
 
   const openDrawer = () => {
@@ -98,7 +100,10 @@ function HamburgerMenu({ navigation }) {
 
   const handleSignOut = () => {
     const signOut = async () => {
-      try { await logout(); } catch (e) { Alert.alert('Sign Out Failed', e.message); }
+      try {
+        await AsyncStorage.removeItem('NESTWORTH_NAV_STATE').catch(() => {});
+        await logout();
+      } catch (e) { Alert.alert('Sign Out Failed', e.message); }
     };
     closeDrawer();
     setTimeout(() => {
@@ -146,6 +151,22 @@ function HamburgerMenu({ navigation }) {
                 <Ionicons name="close-outline" size={24} color={C.textMuted} />
               </TouchableOpacity>
             </View>
+            <View style={[styles.drawerProfile, { borderBottomColor: C.border, backgroundColor: C.surfaceHigh }]}>
+              <View style={[styles.drawerAvatar, { backgroundColor: C.primary + '33' }]}>
+                <Text style={[styles.drawerAvatarText, { color: C.primaryLight }]}>
+                  {getDisplayName(user).charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.drawerProfileName, { color: C.textPrimary }]} numberOfLines={1}>
+                  {getDisplayName(user)}
+                </Text>
+                <Text style={[styles.drawerProfileEmail, { color: C.textMuted }]} numberOfLines={1}>
+                  {user?.email || ''}
+                </Text>
+              </View>
+            </View>
+
             <ScrollView contentContainerStyle={styles.drawerItems}>
               {DRAWER_ITEMS.map((item) => (
                 <TouchableOpacity
@@ -204,7 +225,10 @@ function LogoutIcon() {
   const { colors: C } = useTheme();
   const handleLogout = () => {
     const signOut = async () => {
-      try { await logout(); } catch (e) { Alert.alert('Sign Out Failed', e.message); }
+      try {
+        await AsyncStorage.removeItem('NESTWORTH_NAV_STATE').catch(() => {});
+        await logout();
+      } catch (e) { Alert.alert('Sign Out Failed', e.message); }
     };
     if (Platform.OS === 'web') {
       if (window.confirm('Are you sure you want to sign out?')) signOut();
@@ -330,14 +354,54 @@ function AppStack() {
   );
 }
 
+const NAV_STATE_KEY = 'NESTWORTH_NAV_STATE';
+
 export default function AppNavigator() {
   const { user, loading } = useAuth();
   const { isDark } = useTheme();
+  const [navReady, setNavReady] = useState(false);
+  const [initialNavState, setInitialNavState] = useState(undefined);
+  const prevUserRef = useRef(null);
 
-  if (loading) return <LoadingSpinner />;
+  useEffect(() => {
+    if (loading) return;
+    const restoreState = async () => {
+      try {
+        if (user) {
+          const saved = await AsyncStorage.getItem(NAV_STATE_KEY);
+          if (saved) setInitialNavState(JSON.parse(saved));
+        } else {
+          // User logged out — clear persisted state
+          await AsyncStorage.removeItem(NAV_STATE_KEY);
+          setInitialNavState(undefined);
+        }
+      } catch {}
+      setNavReady(true);
+    };
+    // Reset navReady when auth state changes (login/logout) so we re-read persisted state
+    if (prevUserRef.current !== user) {
+      prevUserRef.current = user;
+      setNavReady(false);
+      restoreState();
+    } else if (!navReady) {
+      restoreState();
+    }
+  }, [loading, user]);
+
+  const handleStateChange = useCallback((state) => {
+    if (user && state) {
+      AsyncStorage.setItem(NAV_STATE_KEY, JSON.stringify(state)).catch(() => {});
+    }
+  }, [user]);
+
+  if (loading || !navReady) return <LoadingSpinner />;
 
   return (
-    <NavigationContainer theme={isDark ? DarkTheme : DefaultTheme}>
+    <NavigationContainer
+      initialState={user ? initialNavState : undefined}
+      onStateChange={handleStateChange}
+      theme={isDark ? DarkTheme : DefaultTheme}
+    >
       {user ? <AppStack /> : <AuthStack />}
     </NavigationContainer>
   );
@@ -383,11 +447,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: 280,
     borderRightWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 4, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 16,
+    ...makeShadow('#000', { horizontal: 4, height: 0, radius: 12, elevation: 16 }),
   },
   drawerHeader: {
     flexDirection: 'row',
@@ -402,6 +462,33 @@ const styles = StyleSheet.create({
     fontSize: FONTS.sizes.xl,
     fontWeight: '800',
     letterSpacing: 1.5,
+  },
+  drawerProfile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: SPACING.md,
+  },
+  drawerAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  drawerAvatarText: {
+    fontSize: FONTS.sizes.lg,
+    fontWeight: '700',
+  },
+  drawerProfileName: {
+    fontSize: FONTS.sizes.md,
+    fontWeight: '700',
+  },
+  drawerProfileEmail: {
+    fontSize: FONTS.sizes.xs,
+    marginTop: 2,
   },
   drawerItems: {
     paddingTop: SPACING.sm,

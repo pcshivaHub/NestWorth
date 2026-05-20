@@ -1,3 +1,26 @@
+import { Platform } from 'react-native';
+
+const hexToRgba = (hex, alpha) => {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+};
+
+export const makeShadow = (color, { opacity = 0.3, height = 4, horizontal = 0, radius = 8, elevation = 6 } = {}) =>
+  Platform.select({
+    web: { boxShadow: `${horizontal}px ${height}px ${radius * 2}px ${hexToRgba(color, opacity)}` },
+    default: {
+      shadowColor: color,
+      shadowOffset: { width: horizontal, height },
+      shadowOpacity: opacity,
+      shadowRadius: radius,
+      elevation,
+    },
+  });
+
 export const DARK_COLORS = {
   bg: '#0D1028',
   surface: '#161929',
@@ -70,11 +93,5 @@ export const RADIUS = {
 };
 
 export const SHADOW = {
-  card: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
+  card: makeShadow('#000'),
 };

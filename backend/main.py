@@ -141,7 +141,7 @@ def _family_response(family) -> dict:
                 "user_id": m.user_id,
                 "role": m.role,
                 "joined_at": m.joined_at,
-                "display_name": None,
+                "display_name": m.display_name,
             }
             for m in family.members
         ],

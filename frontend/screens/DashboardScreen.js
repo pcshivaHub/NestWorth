@@ -3,11 +3,12 @@ import {
   View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Receipt, Bank, Tag, UsersThree } from 'phosphor-react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getSummary } from '../api/summary';
 import { getTransactions } from '../api/transactions';
 import { getAccounts, getAccountBalance } from '../api/accounts';
-import { FONTS, SPACING, RADIUS } from '../utils/theme';
+import { FONTS, SPACING, RADIUS, makeShadow } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency, formatDate, getInitials } from '../utils/helpers';
@@ -16,18 +17,22 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
 import BankLogo from '../components/BankLogo';
 
-const TYPE_ICONS = { savings: '🏦', checking: '💳', cash: '💵', credit: '🔖' };
 const BREAKUP_PERIODS = [
   { key: 'week', label: 'This Week' },
   { key: 'month', label: 'This Month' },
   { key: 'year', label: 'This Year' },
 ];
 
-function CategoryBreakup({ title, items = [], color }) {
+function CategoryBreakup({ title, items = [], color, navigation, txnType }) {
   const { colors: C } = useTheme();
   const styles = useMemo(() => makeStyles(C), [C]);
 
   const empty = <Text style={styles.breakupEmpty}>No category data yet</Text>;
+
+  const goToCategory = (item) => {
+    if (!navigation || !item.category_id) return;
+    navigation.navigate('Transactions', { categoryId: item.category_id, typeFilter: txnType, _nav_ts: Date.now() });
+  };
 
   if (Platform.OS === 'web') {
     return (
@@ -41,7 +46,7 @@ function CategoryBreakup({ title, items = [], color }) {
               const barColor = pct < 0.6 ? C.income : pct < 0.85 ? C.warning : C.expense;
               const isOver = hasBudget && pct >= 1;
               return (
-                <View key={item.category_id || item.category_name} style={styles.budgetTile}>
+                <TouchableOpacity key={item.category_id || item.category_name} style={styles.budgetTile} onPress={() => goToCategory(item)} activeOpacity={0.75}>
                   <Text style={styles.tileName} numberOfLines={1}>
                     {item.category_name || 'Uncategorized'}{isOver ? ' ⚠' : ''}
                   </Text>
@@ -56,7 +61,7 @@ function CategoryBreakup({ title, items = [], color }) {
                       </Text>
                     </>
                   )}
-                </View>
+                </TouchableOpacity>
               );
             })}
           </View>
@@ -75,7 +80,7 @@ function CategoryBreakup({ title, items = [], color }) {
           const barColor = pct < 0.6 ? C.income : pct < 0.85 ? C.warning : C.expense;
           const isOver = hasBudget && pct >= 1;
           return (
-            <View key={item.category_id || item.category_name} style={styles.catRow}>
+            <TouchableOpacity key={item.category_id || item.category_name} style={styles.catRow} onPress={() => goToCategory(item)} activeOpacity={0.75}>
               <View style={styles.catRowTop}>
                 <Text style={styles.catName} numberOfLines={1}>
                   {item.category_name || 'Uncategorized'}{isOver ? '  ⚠' : ''}
@@ -92,7 +97,7 @@ function CategoryBreakup({ title, items = [], color }) {
                   </Text>
                 </View>
               )}
-            </View>
+            </TouchableOpacity>
           );
         })
       )}
@@ -103,7 +108,7 @@ function CategoryBreakup({ title, items = [], color }) {
 export default function DashboardScreen({ navigation }) {
   const { colors: C } = useTheme();
   const styles = useMemo(() => makeStyles(C), [C]);
-  const { family } = useAuth();
+  const { user, family } = useAuth();
 
   const [summary, setSummary] = useState(null);
   const [recentTx, setRecentTx] = useState([]);
@@ -157,9 +162,12 @@ export default function DashboardScreen({ navigation }) {
         <Text style={styles.subtitle}>Here's your financial overview</Text>
         {family && family.members.length > 1 && (
           <View style={styles.familyChip}>
-            <Text style={styles.familyChipText}>
-              👨‍👩‍👧 {family.name} · {family.members.length} members
-            </Text>
+            <View style={styles.familyChipInner}>
+              <UsersThree size={14} color={C.primaryLight} />
+              <Text style={styles.familyChipText}>
+                {family.name} · {family.members.length} members
+              </Text>
+            </View>
           </View>
         )}
       </View>
@@ -198,54 +206,59 @@ export default function DashboardScreen({ navigation }) {
             </View>
           </View>
 
-          {accounts.length > 0 && (
-            <>
-              <View style={styles.breakupDivider} />
-              <Text style={styles.accountsLabel}>ACCOUNT BALANCES</Text>
-              {Platform.OS === 'web' ? (
-                <View style={styles.accountsGrid}>
-                  {accounts.map((acc) => (
-                    <TouchableOpacity
-                      key={acc.id}
-                      style={styles.accountChip}
-                      onPress={() => navigation.navigate('AccountDetail', { account: acc, balance: balances[acc.id] })}
-                    >
-                      <BankLogo name={acc.name} fallback={TYPE_ICONS[acc.type] || '💰'} size={30} style={styles.accountChipLogo} />
-                      <Text style={styles.accountChipName} numberOfLines={1}>{acc.name}</Text>
-                      <Text style={[styles.accountChipBalance, {
-                        color: (balances[acc.id] ?? acc.opening_balance ?? 0) >= 0 ? C.income : C.expense,
-                      }]} numberOfLines={1} adjustsFontSizeToFit>
-                        {formatCurrency(balances[acc.id] ?? acc.opening_balance ?? 0)}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ) : (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountsScrollMobile}>
-                  {accounts.map((acc) => (
-                    <TouchableOpacity
-                      key={acc.id}
-                      style={styles.accountChipMobile}
-                      onPress={() => navigation.navigate('AccountDetail', { account: acc, balance: balances[acc.id] })}
-                    >
-                      <BankLogo name={acc.name} fallback={TYPE_ICONS[acc.type] || '💰'} size={28} style={styles.accountChipLogo} />
-                      <Text style={styles.accountChipName} numberOfLines={1}>{acc.name}</Text>
-                      <Text
-                        style={[styles.accountChipBalance, {
-                          color: (balances[acc.id] ?? acc.opening_balance ?? 0) >= 0 ? C.income : C.expense,
-                        }]}
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.7}
-                      >
-                        {formatCurrency(balances[acc.id] ?? acc.opening_balance ?? 0)}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
-            </>
-          )}
+          {accounts.length > 0 && (() => {
+            const isFamily = (family?.members?.length ?? 0) > 1;
+            const myAccounts = accounts.filter((a) =>
+              (['savings', 'checking'].includes(a.type) || (a.type === 'credit' && a.user_id === user?.id)) &&
+              a.user_id === user?.id
+            );
+            const othersAccounts = isFamily ? accounts.filter((a) =>
+              ['savings', 'checking'].includes(a.type) && a.user_id !== user?.id
+            ) : [];
+            if (myAccounts.length === 0 && othersAccounts.length === 0) return null;
+
+            const renderAccountChip = (acc) => (
+              <TouchableOpacity key={acc.id} style={styles.accountChipMobile} onPress={() => navigation.navigate('AccountDetail', { account: acc, balance: balances[acc.id] })}>
+                <BankLogo name={acc.name} size={28} style={styles.accountChipLogo} />
+                <Text style={styles.accountChipName} numberOfLines={1}>{acc.name}</Text>
+                <Text style={[styles.accountChipBalance, { color: (balances[acc.id] ?? acc.opening_balance ?? 0) >= 0 ? C.income : C.expense }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                  {formatCurrency(balances[acc.id] ?? acc.opening_balance ?? 0)}
+                </Text>
+              </TouchableOpacity>
+            );
+
+            const hasBoth = myAccounts.length > 0 && othersAccounts.length > 0;
+
+            return (
+              <>
+                <View style={styles.breakupDivider} />
+                {hasBoth ? (
+                  <View style={styles.accountsRow}>
+                    <View style={styles.accountsCol}>
+                      <Text style={styles.accountsLabel}>MY ACCOUNTS</Text>
+                      <View style={styles.accountsChipWrap}>
+                        {myAccounts.map(renderAccountChip)}
+                      </View>
+                    </View>
+                    <View style={styles.accountsColDivider} />
+                    <View style={styles.accountsCol}>
+                      <Text style={styles.accountsLabel}>FAMILY ACCOUNTS</Text>
+                      <View style={styles.accountsChipWrap}>
+                        {othersAccounts.map(renderAccountChip)}
+                      </View>
+                    </View>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={styles.accountsLabel}>{isFamily ? 'MY ACCOUNTS' : 'SAVINGS & CHECKING'}</Text>
+                    <View style={styles.accountsChipWrap}>
+                      {(myAccounts.length > 0 ? myAccounts : othersAccounts).map(renderAccountChip)}
+                    </View>
+                  </>
+                )}
+              </>
+            );
+          })()}
 
           <View style={styles.breakupDivider} />
           <View style={styles.periodRow}>
@@ -266,11 +279,15 @@ export default function DashboardScreen({ navigation }) {
             title={`INCOME BY CATEGORY — ${BREAKUP_PERIODS.find((p) => p.key === breakupPeriod)?.label.toUpperCase()}`}
             items={summary.income_by_category || []}
             color={ENTITY_THEME.income.color}
+            navigation={navigation}
+            txnType="income"
           />
           <CategoryBreakup
             title={`EXPENSES BY CATEGORY — ${BREAKUP_PERIODS.find((p) => p.key === breakupPeriod)?.label.toUpperCase()}`}
             items={summary.expense_by_category || []}
             color={ENTITY_THEME.expense.color}
+            navigation={navigation}
+            txnType="expense"
           />
         </Card>
       )}
@@ -278,12 +295,12 @@ export default function DashboardScreen({ navigation }) {
       {Platform.OS === 'web' ? (
         <View style={styles.quickActions}>
           {[
-            { label: 'Transactions', icon: '🧾', tab: 'Transactions' },
-            { label: 'Accounts', icon: '🏦', tab: 'Accounts' },
-            { label: 'Categories', icon: '🏷️', tab: 'Categories' },
+            { label: 'Transactions', Icon: Receipt, tab: 'Transactions' },
+            { label: 'Accounts', Icon: Bank, tab: 'Accounts' },
+            { label: 'Categories', Icon: Tag, tab: 'Categories' },
           ].map((action) => (
             <TouchableOpacity key={action.tab} style={styles.actionBtn} onPress={() => navigation.navigate(action.tab)}>
-              <Text style={styles.actionIcon}>{action.icon}</Text>
+              <action.Icon size={24} color={C.textSecondary} style={styles.actionIcon} />
               <Text style={styles.actionLabel}>{action.label}</Text>
             </TouchableOpacity>
           ))}
@@ -342,6 +359,7 @@ const makeStyles = (C) => StyleSheet.create({
   greeting: { color: C.textPrimary, fontSize: FONTS.sizes.xxl, fontWeight: '700' },
   subtitle: { color: C.textSecondary, fontSize: FONTS.sizes.md, marginTop: 2 },
   familyChip: { alignSelf: 'flex-start', backgroundColor: C.primary + '22', borderRadius: RADIUS.full, paddingHorizontal: SPACING.sm + 2, paddingVertical: 4, marginTop: SPACING.sm, borderWidth: 1, borderColor: C.primary + '44' },
+  familyChipInner: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   familyChipText: { color: C.primaryLight, fontSize: FONTS.sizes.xs, fontWeight: '600' },
 
   heroCard: { marginBottom: SPACING.md, padding: SPACING.lg },
@@ -382,6 +400,10 @@ const makeStyles = (C) => StyleSheet.create({
   budgetBarLabel: { fontSize: FONTS.sizes.xs, marginTop: 3, textAlign: 'center' },
   accountsDivider: { height: 1, backgroundColor: C.border, marginVertical: SPACING.md },
   accountsLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, letterSpacing: 2, fontWeight: '600', marginBottom: SPACING.sm },
+  accountsRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  accountsCol: { flex: 1 },
+  accountsColDivider: { width: 1, backgroundColor: C.border, marginHorizontal: SPACING.sm, alignSelf: 'stretch' },
+  accountsChipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   accountsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
   accountChip: { backgroundColor: C.surfaceHigh, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: C.border, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, alignItems: 'center', minWidth: 110, flex: 1 },
   accountsScrollMobile: { marginHorizontal: -SPACING.sm },
@@ -392,9 +414,9 @@ const makeStyles = (C) => StyleSheet.create({
 
   quickActions: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.lg },
   actionBtn: { flex: 1, backgroundColor: C.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: C.border, alignItems: 'center', padding: SPACING.md },
-  actionIcon: { fontSize: 22, marginBottom: 4 },
+  actionIcon: { marginBottom: 4 },
   actionLabel: { color: C.textSecondary, fontSize: FONTS.sizes.xs, textAlign: 'center', lineHeight: 16 },
-  addTxnBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, backgroundColor: C.primary, borderRadius: RADIUS.full, paddingVertical: SPACING.sm + 2, marginBottom: SPACING.lg, shadowColor: C.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 6 },
+  addTxnBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, backgroundColor: C.primary, borderRadius: RADIUS.full, paddingVertical: SPACING.sm + 2, marginBottom: SPACING.lg, ...makeShadow(C.primary, { opacity: 0.4 }) },
   addTxnLabel: { color: '#fff', fontSize: FONTS.sizes.md, fontWeight: '700' },
 
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm },

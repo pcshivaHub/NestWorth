@@ -10,21 +10,22 @@ import {
 } from '../api/reports';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
-import { formatCurrency } from '../utils/helpers';
+import { useAuth } from '../context/AuthContext';
+import { formatCurrency, getMemberName } from '../utils/helpers';
 import Card from '../components/Card';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
 import EmptyState from '../components/EmptyState';
+import TypeIcon from '../components/TypeIcon';
+import {
+  ChartBar, ChartPieSlice, ClipboardText, Briefcase, TrendUp, TrendDown,
+  UsersThree, ArrowUpRight, ArrowDownLeft,
+} from 'phosphor-react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const CHART_WIDTH = SCREEN_WIDTH - SPACING.md * 2 - 32;
 
 const PALETTE = ['#6C63FF', '#00D9A3', '#FF5C7A', '#FFB74D', '#4DA3FF', '#FF8A65', '#A5D6A7'];
-
-const ASSET_TYPE_ICONS = {
-  real_estate: '🏠', gold: '🪙', jewelry: '💍', vehicle: '🚗',
-  stocks: '📈', mutual_fund: '📊', fixed_deposit: '🏦', other: '💼',
-};
 
 // Sub-tabs with isHeader sentinels for section labels
 const SUB_TABS = [
@@ -103,7 +104,7 @@ function TrendReport({ months, C, styles }) {
       </View>
       {barData.length > 0
         ? <BarChart data={barData} barWidth={16} noOfSections={4} isAnimated width={CHART_WIDTH} yAxisTextStyle={{ color: C.textMuted, fontSize: 9 }} xAxisColor={C.border} yAxisColor={C.border} rulesColor={C.border} />
-        : <EmptyState icon="📊" message="No transaction data yet." />}
+        : <EmptyState icon={<ChartBar size={48} color={C.textMuted} />} message="No transaction data yet." />}
       <View style={styles.legendWrap}>
         <LegendDot color={C.income} label="Income" styles={styles} />
         <LegendDot color={C.expense} label="Expense" styles={styles} />
@@ -150,7 +151,7 @@ function CategoryReport({ period, C, styles }) {
             />
           </View>
         )
-        : <EmptyState icon="🥧" message="No expense data for this period." />}
+        : <EmptyState icon={<ChartPieSlice size={48} color={C.textMuted} />} message="No expense data for this period." />}
       <View style={styles.legendGrid}>
         {(data.breakdown || []).map((item, i) => (
           <View key={item.category_id || item.category_name} style={styles.legendGridItem}>
@@ -180,7 +181,7 @@ function BudgetReport({ period, C, styles }) {
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorBanner message={error} onRetry={load} />;
   if (!data) return null;
-  if (data.categories.length === 0) return <EmptyState icon="📋" message="No budget data. Add budgets to your expense categories." />;
+  if (data.categories.length === 0) return <EmptyState icon={<ClipboardText size={48} color={C.textMuted} />} message="No budget data. Add budgets to your expense categories." />;
 
   return (
     <View>
@@ -244,7 +245,7 @@ function AssetPortfolioReport({ C, styles }) {
   if (!data) return null;
 
   if (data.assets.length === 0) {
-    return <EmptyState icon="💼" message="No assets yet. Add assets from the Accounts tab." />;
+    return <EmptyState icon={<Briefcase size={48} color={C.textMuted} />} message="No assets yet. Add assets from the Accounts tab." />;
   }
 
   const pieData = (data.by_type || []).map((t, i) => ({
@@ -281,7 +282,7 @@ function AssetPortfolioReport({ C, styles }) {
           <View key={t.asset_type} style={styles.legendGridItem}>
             <LegendDot
               color={PALETTE[i % PALETTE.length]}
-              label={`${ASSET_TYPE_ICONS[t.asset_type] || '💼'} ${t.asset_type.replace('_', ' ')} (${t.count})`}
+              label={`${t.asset_type.replace('_', ' ')} (${t.count})`}
               styles={styles}
             />
             <Text style={[styles.legendAmt, { color: C.netBalance }]}>{formatCurrency(t.total_value)}</Text>
@@ -294,7 +295,9 @@ function AssetPortfolioReport({ C, styles }) {
         const hasGain = a.gain_loss != null;
         return (
           <View key={a.id} style={styles.assetRow}>
-            <Text style={styles.assetRowIcon}>{ASSET_TYPE_ICONS[a.asset_type] || '💼'}</Text>
+            <View style={styles.assetRowIconWrap}>
+              <TypeIcon type={a.asset_type} size={22} color={C.primaryLight} />
+            </View>
             <View style={styles.assetRowInfo}>
               <Text style={styles.assetRowName} numberOfLines={1}>{a.name}</Text>
               <Text style={styles.assetRowType}>{a.asset_type.replace('_', ' ')}</Text>
@@ -354,7 +357,7 @@ function NetWorthReport({ months, C, styles }) {
             yAxisColor={C.border} rulesColor={C.border} dataPointsColor={C.netBalance} thickness={2}
           />
         )
-        : <EmptyState icon="📈" message="No data for this period." />}
+        : <EmptyState icon={<TrendUp size={48} color={C.textMuted} />} message="No data for this period." />}
     </View>
   );
 }
@@ -362,6 +365,10 @@ function NetWorthReport({ months, C, styles }) {
 // ─── FamilyReport ──────────────────────────────────────
 
 function FamilyReport({ period, C, styles }) {
+  const { user, family } = useAuth();
+  const memberNameMap = Object.fromEntries(
+    (family?.members || []).map((m) => [m.user_id, getMemberName(m, user)])
+  );
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -378,7 +385,7 @@ function FamilyReport({ period, C, styles }) {
   if (!data) return null;
 
   const members = data.members || [];
-  if (members.length === 0) return <EmptyState icon="👨‍👩‍👧" message="No family data available." />;
+  if (members.length === 0) return <EmptyState icon={<UsersThree size={48} color={C.textMuted} />} message="No family data available." />;
 
   const barData = [];
   members.forEach((m, i) => {
@@ -391,7 +398,7 @@ function FamilyReport({ period, C, styles }) {
     <View>
       {barData.length > 0
         ? <BarChart data={barData} barWidth={16} noOfSections={4} isAnimated width={CHART_WIDTH} yAxisTextStyle={{ color: C.textMuted, fontSize: 9 }} xAxisColor={C.border} yAxisColor={C.border} rulesColor={C.border} />
-        : <EmptyState icon="👨‍👩‍👧" message="No transaction data for this period." />}
+        : <EmptyState icon={<UsersThree size={48} color={C.textMuted} />} message="No transaction data for this period." />}
       <View style={styles.legendWrap}>
         <LegendDot color={C.income} label="Income" styles={styles} />
         <LegendDot color={C.expense} label="Expense" styles={styles} />
@@ -399,7 +406,7 @@ function FamilyReport({ period, C, styles }) {
       {members.map((m, i) => (
         <View key={m.user_id} style={styles.memberCard}>
           <View style={styles.memberHeader}>
-            <Text style={styles.memberName}>{m.is_self ? '👤 You' : `👤 Member ${i + 1}`}</Text>
+            <Text style={styles.memberName}>👤 {memberNameMap[m.user_id] || 'Family Member'}</Text>
             <Text style={[styles.memberNet, { color: m.net >= 0 ? C.income : C.expense }]}>Net: {formatCurrency(m.net)}</Text>
           </View>
           <View style={styles.memberStats}>
@@ -434,7 +441,7 @@ function ExpenseTrendsReport({ months, C, styles }) {
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorBanner message={error} onRetry={load} />;
-  if (!data || data.categories.length === 0) return <EmptyState icon="📉" message="No expense data yet." />;
+  if (!data || data.categories.length === 0) return <EmptyState icon={<TrendDown size={48} color={C.textMuted} />} message="No expense data yet." />;
 
   // Top 5 categories only — keeps chart readable
   const topCats = data.categories.slice(0, 5);
@@ -464,7 +471,7 @@ function ExpenseTrendsReport({ months, C, styles }) {
           yAxisTextStyle={{ color: C.textMuted, fontSize: 9 }}
           xAxisColor={C.border} yAxisColor={C.border} rulesColor={C.border}
         />
-      ) : <EmptyState icon="📉" message="No data for this period." />}
+      ) : <EmptyState icon={<TrendDown size={48} color={C.textMuted} />} message="No data for this period." />}
 
       <View style={[styles.legendGrid, { marginTop: SPACING.md }]}>
         {topCats.map((cat, i) => (
@@ -480,13 +487,15 @@ function ExpenseTrendsReport({ months, C, styles }) {
 
 // ─── NetWorthSnapshotReport ────────────────────────────
 
-const NW_TYPE_ICONS  = { savings: '🏦', checking: '💳', cash: '💵', credit: '🔖', fd: '📅', rd: '🔄', mutual_fund: '📊', equity: '📈', lic: '🛡️', ppf: '🏛️', nps: '🎯' };
 const NW_TYPE_LABELS = { savings: 'Savings', checking: 'Checking', cash: 'Cash', credit: 'Credit Card', fd: 'Fixed Deposit', rd: 'Recurring Deposit', mutual_fund: 'Mutual Fund', equity: 'Equity / Stocks', lic: 'LIC Policy', ppf: 'PPF', nps: 'NPS' };
 
-function TierRow({ label, value, color, bold = false, styles, indent = false }) {
+function TierRow({ label, value, color, bold = false, styles, indent = false, icon }) {
   return (
     <View style={[styles.snapshotRow, indent && { paddingLeft: 16 }]}>
-      <Text style={bold ? styles.snapshotLabel : styles.snapshotSubLabel}>{label}</Text>
+      <View style={styles.tierRowLabel}>
+        {icon && <View style={styles.tierRowIcon}>{icon}</View>}
+        <Text style={bold ? styles.snapshotLabel : styles.snapshotSubLabel}>{label}</Text>
+      </View>
       <Text style={[bold ? styles.snapshotValue : styles.snapshotSubValue, { color }]}>{value}</Text>
     </View>
   );
@@ -524,7 +533,8 @@ function NetWorthSnapshotCard({ C, styles }) {
       {(snap.bank_breakdown || []).map((item) => (
         <TierRow
           key={item.account_type}
-          label={`  ${NW_TYPE_ICONS[item.account_type] || '💰'}  ${NW_TYPE_LABELS[item.account_type] || item.account_type}${item.count > 1 ? ` (${item.count})` : ''}`}
+          icon={<TypeIcon type={item.account_type} size={13} color={item.balance >= 0 ? C.textSecondary : C.expense} />}
+          label={`${NW_TYPE_LABELS[item.account_type] || item.account_type}${item.count > 1 ? ` (${item.count})` : ''}`}
           value={formatCurrency(item.balance)}
           color={item.balance >= 0 ? C.textSecondary : C.expense}
           styles={styles}
@@ -538,8 +548,8 @@ function NetWorthSnapshotCard({ C, styles }) {
         <Text style={[styles.snapshotTierLabel, { color: C.income }]}>WITH OUTSTANDINGS</Text>
         <Text style={[styles.snapshotTierValue, { color: C.income }]}>{formatCurrency(snap.grand1_with_outstandings)}</Text>
       </View>
-      <TierRow label="  ↗  Lent Out"  value={formatCurrency(snap.total_lent)}     color={C.income}  styles={styles} indent />
-      <TierRow label="  ↙  Borrowed"  value={`-${formatCurrency(snap.total_borrowed)}`} color={C.expense} styles={styles} indent />
+      <TierRow icon={<ArrowUpRight size={13} color={C.income} />} label="Lent Out" value={formatCurrency(snap.total_lent)} color={C.income} styles={styles} indent />
+      <TierRow icon={<ArrowDownLeft size={13} color={C.expense} />} label="Borrowed" value={`-${formatCurrency(snap.total_borrowed)}`} color={C.expense} styles={styles} indent />
 
       {/* ── Tier 3: + Investments + Assets ─────── */}
       <View style={styles.snapshotDivider} />
@@ -549,11 +559,12 @@ function NetWorthSnapshotCard({ C, styles }) {
       </View>
       {(snap.investment_breakdown || []).length > 0 && (
         <>
-          <TierRow label="  📂  Investments" value={formatCurrency(snap.investment_value)} color={C.textSecondary} styles={styles} indent />
+          <TierRow icon={<ChartPieSlice size={13} color={C.textSecondary} />} label="Investments" value={formatCurrency(snap.investment_value)} color={C.textSecondary} styles={styles} indent />
           {snap.investment_breakdown.map((item) => (
             <TierRow
               key={item.account_type}
-              label={`      ${NW_TYPE_ICONS[item.account_type] || '📂'}  ${NW_TYPE_LABELS[item.account_type] || item.account_type}${item.count > 1 ? ` (${item.count})` : ''}`}
+              icon={<TypeIcon type={item.account_type} size={13} color={C.textMuted} />}
+              label={`${NW_TYPE_LABELS[item.account_type] || item.account_type}${item.count > 1 ? ` (${item.count})` : ''}`}
               value={formatCurrency(item.balance)}
               color={C.textMuted}
               styles={styles}
@@ -561,7 +572,7 @@ function NetWorthSnapshotCard({ C, styles }) {
           ))}
         </>
       )}
-      <TierRow label="  💼  Asset Portfolio" value={formatCurrency(snap.asset_value)} color={C.textSecondary} styles={styles} indent />
+      <TierRow icon={<Briefcase size={13} color={C.textSecondary} />} label="Asset Portfolio" value={formatCurrency(snap.asset_value)} color={C.textSecondary} styles={styles} indent />
     </View>
   );
 }
@@ -720,7 +731,7 @@ const makeStyles = (C) => StyleSheet.create({
 
   assetListDivider: { height: 1, backgroundColor: C.border, marginVertical: SPACING.md },
   assetRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: SPACING.sm, gap: SPACING.sm },
-  assetRowIcon: { fontSize: 24, width: 32, textAlign: 'center' },
+  assetRowIconWrap: { width: 32, alignItems: 'center', justifyContent: 'center' },
   assetRowInfo: { flex: 1 },
   assetRowName: { color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600' },
   assetRowType: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 2 },
@@ -730,7 +741,9 @@ const makeStyles = (C) => StyleSheet.create({
 
   snapshotCard: { marginBottom: SPACING.md },
   snapshotDivider: { height: 1, backgroundColor: C.border, marginVertical: SPACING.md },
-  snapshotRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },
+  snapshotRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, gap: SPACING.sm },
+  tierRowLabel: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 6 },
+  tierRowIcon: { width: 16, alignItems: 'center' },
   snapshotLabel: { color: C.textSecondary, fontSize: FONTS.sizes.sm, fontWeight: '600' },
   snapshotValue: { fontSize: FONTS.sizes.sm, fontWeight: '700' },
   snapshotSubRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, paddingLeft: SPACING.lg },

@@ -28,6 +28,7 @@ class FamilyMember(Base):
     user_id = Column(UUID(as_uuid=True), nullable=False, unique=True)
     role = Column(String(20), nullable=False, default="member")
     joined_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    display_name = Column(String, nullable=True)
 
     family = relationship("Family", back_populates="members")
 

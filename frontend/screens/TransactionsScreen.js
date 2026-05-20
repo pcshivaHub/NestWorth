@@ -1,20 +1,23 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View, Text, FlatList, StyleSheet, RefreshControl,
   TouchableOpacity, ScrollView,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getTransactions } from '../api/transactions';
 import { getCategories } from '../api/categories';
-import { FONTS, SPACING, RADIUS } from '../utils/theme';
+import { getAccounts } from '../api/accounts';
+import { FONTS, SPACING, RADIUS, makeShadow } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
-import { formatCurrency, formatDate } from '../utils/helpers';
+import { formatCurrency, formatDate, getMemberName } from '../utils/helpers';
 import { useAuth } from '../context/AuthContext';
 import Card from '../components/Card';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
 import EmptyState from '../components/EmptyState';
 import BankLogo from '../components/BankLogo';
+import { Receipt } from 'phosphor-react-native';
 
 const startOfWeek = () => { const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - d.getDay()); return d; };
 const startOfMonth = () => { const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); return d; };
@@ -26,30 +29,51 @@ const isInPeriod = (txnDateStr, period) => {
   return true;
 };
 
-export default function TransactionsScreen({ navigation }) {
+export default function TransactionsScreen({ navigation, route }) {
   const { colors: C } = useTheme();
   const styles = useMemo(() => makeStyles(C), [C]);
   const { user, family } = useAuth();
 
   const memberMap = Object.fromEntries(
-    (family?.members || []).map((m) => [m.user_id, m.display_name || 'Member'])
+    (family?.members || []).map((m) => [m.user_id, getMemberName(m, user)])
   );
 
   const [allTransactions, setAllTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [typeFilter, setTypeFilter] = useState('all');
   const [periodFilter, setPeriodFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState(null);
+  const [accountFilter, setAccountFilter] = useState(null);
+  const [lastAccountId, setLastAccountId] = useState(null);
+  const [lastCategoryId, setLastCategoryId] = useState(null);
+
+  const lastNavTs = useRef(0);
+  useEffect(() => {
+    const ts = route?.params?._nav_ts || 0;
+    if (ts > lastNavTs.current) {
+      lastNavTs.current = ts;
+      setTypeFilter(route.params?.typeFilter || 'all');
+      setCategoryFilter(route.params?.categoryId || null);
+    }
+  }, [route?.params?._nav_ts]);
 
   const load = async () => {
     try {
       setError(null);
-      const [list, cats] = await Promise.all([getTransactions(), getCategories()]);
+      const [list, cats, accs, savedAccId, savedCatId] = await Promise.all([
+        getTransactions(), getCategories(), getAccounts(),
+        AsyncStorage.getItem('LAST_TXN_ACCOUNT_ID').catch(() => null),
+        AsyncStorage.getItem('LAST_TXN_CATEGORY_ID').catch(() => null),
+      ]);
       setAllTransactions(list || []);
       setCategories(cats || []);
+      setAccounts(accs || []);
+      if (savedAccId) setLastAccountId(savedAccId);
+      if (savedCatId) setLastCategoryId(savedCatId);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -65,10 +89,21 @@ export default function TransactionsScreen({ navigation }) {
     if (typeFilter !== 'all' && tx.type !== typeFilter) return false;
     if (!isInPeriod(tx.txn_date, periodFilter)) return false;
     if (categoryFilter && tx.category_id !== categoryFilter) return false;
+    if (accountFilter && tx.account_id !== accountFilter) return false;
     return true;
   });
 
-  const visibleCategories = categories.filter((c) => typeFilter === 'all' || c.kind === typeFilter);
+  const sbAccounts = useMemo(() => {
+    const sb = accounts.filter((a) => ['savings', 'checking'].includes(a.type));
+    if (!lastAccountId) return sb;
+    return [...sb.filter((a) => a.id === lastAccountId), ...sb.filter((a) => a.id !== lastAccountId)];
+  }, [accounts, lastAccountId]);
+
+  const visibleCategories = useMemo(() => {
+    const cats = categories.filter((c) => typeFilter === 'all' || c.kind === typeFilter);
+    if (!lastCategoryId) return cats;
+    return [...cats.filter((c) => c.id === lastCategoryId), ...cats.filter((c) => c.id !== lastCategoryId)];
+  }, [categories, typeFilter, lastCategoryId]);
 
   if (loading) return <LoadingSpinner />;
 
@@ -89,7 +124,7 @@ export default function TransactionsScreen({ navigation }) {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.list}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
-        ListEmptyComponent={<EmptyState icon="🧾" message="No transactions found." />}
+        ListEmptyComponent={<EmptyState icon={<Receipt size={48} color={C.textMuted} />} message="No transactions found." />}
         ListHeaderComponent={
           <>
             <View style={styles.typeRow}>
@@ -124,6 +159,29 @@ export default function TransactionsScreen({ navigation }) {
               ))}
             </View>
 
+            {sbAccounts.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catScroll}>
+                <TouchableOpacity
+                  style={[styles.catChip, accountFilter === null && styles.catChipActive]}
+                  onPress={() => setAccountFilter(null)}
+                >
+                  <Text style={[styles.catChipText, accountFilter === null && styles.catChipTextActive]}>All Accounts</Text>
+                </TouchableOpacity>
+                {sbAccounts.map((a) => (
+                  <TouchableOpacity
+                    key={a.id}
+                    style={[styles.catChip, accountFilter === a.id && styles.catChipActive]}
+                    onPress={() => setAccountFilter(accountFilter === a.id ? null : a.id)}
+                  >
+                    <View style={styles.acctChipInner}>
+                      <BankLogo name={a.name} size={14} style={{ marginRight: 4 }} />
+                      <Text style={[styles.catChipText, accountFilter === a.id && styles.catChipTextActive]}>{a.name}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
             {visibleCategories.length > 0 && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catScroll}>
                 <TouchableOpacity
@@ -147,6 +205,7 @@ export default function TransactionsScreen({ navigation }) {
             <Text style={styles.countLabel}>
               {filtered.length} transaction{filtered.length !== 1 ? 's' : ''}
               {periodFilter !== 'all' ? ` · ${periodFilter === 'week' ? 'This Week' : 'This Month'}` : ''}
+              {accountFilter ? ` · ${accounts.find(a => a.id === accountFilter)?.name}` : ''}
               {categoryFilter ? ` · ${categories.find(c => c.id === categoryFilter)?.name}` : ''}
             </Text>
           </>
@@ -165,7 +224,7 @@ export default function TransactionsScreen({ navigation }) {
                     <Text style={styles.txMeta}>{item.account_name} · {formatDate(item.txn_date)}</Text>
                   </View>
                   {item.user_id && item.user_id !== user?.id && (
-                    <Text style={styles.txOwner}>by {memberMap[item.user_id] || 'Member'}</Text>
+                    <Text style={styles.txOwner}>by {memberMap[item.user_id] || 'Family Member'}</Text>
                   )}
                   {item.note ? <Text style={styles.txNote} numberOfLines={1}>📝 {item.note}</Text> : null}
                 </View>
@@ -205,6 +264,7 @@ const makeStyles = (C) => StyleSheet.create({
   periodChipTextActive: { color: C.primaryLight, fontWeight: '700' },
   catScroll: { flexGrow: 0, marginBottom: SPACING.sm },
   catChip: { paddingHorizontal: SPACING.md, paddingVertical: 6, borderRadius: RADIUS.full, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh, marginRight: SPACING.sm },
+  acctChipInner: { flexDirection: 'row', alignItems: 'center' },
   catChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
   catChipText: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '500' },
   catChipTextActive: { color: C.primaryLight, fontWeight: '700' },
@@ -224,6 +284,6 @@ const makeStyles = (C) => StyleSheet.create({
   txAmount: { fontSize: FONTS.sizes.md, fontWeight: '700' },
   badge: { borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 2, marginTop: 4 },
   badgeText: { fontSize: FONTS.sizes.xs, fontWeight: '600' },
-  fab: { position: 'absolute', bottom: 20, right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', shadowColor: C.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 8, elevation: 10 },
+  fab: { position: 'absolute', bottom: 20, right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', ...makeShadow(C.primary, { opacity: 0.5, elevation: 10 }) },
   fabIcon: { color: '#fff', fontSize: 28, lineHeight: 32 },
 });

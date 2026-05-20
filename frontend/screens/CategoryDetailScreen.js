@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   Alert, ScrollView, Modal,
 } from 'react-native';
+import { ArrowUp, ArrowDown } from 'phosphor-react-native';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { formatCurrency } from '../utils/helpers';
@@ -71,7 +72,9 @@ export default function CategoryDetailScreen({ route, navigation }) {
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Card style={styles.heroCard}>
         <View style={[styles.iconBg, { backgroundColor: category.kind === 'income' ? C.incomeSubtle : C.expenseSubtle }]}>
-          <Text style={styles.icon}>{category.kind === 'income' ? '↑' : '↓'}</Text>
+          {category.kind === 'income'
+            ? <ArrowUp size={32} color={C.income} weight="bold" />
+            : <ArrowDown size={32} color={C.expense} weight="bold" />}
         </View>
         <Text style={styles.heroName}>{category.name}</Text>
         <View style={[styles.kindPill, { backgroundColor: category.kind === 'income' ? C.incomeSubtle : C.expenseSubtle }]}>
@@ -106,9 +109,14 @@ export default function CategoryDetailScreen({ route, navigation }) {
                   style={[styles.toggleBtn, form.kind === t && { borderColor: t === 'income' ? C.income : C.expense, backgroundColor: t === 'income' ? C.incomeSubtle : C.expenseSubtle }]}
                   onPress={() => setForm({ ...form, kind: t })}
                 >
-                  <Text style={[styles.toggleText, form.kind === t && { color: t === 'income' ? C.income : C.expense }]}>
-                    {t === 'income' ? '↑ Income' : '↓ Expense'}
-                  </Text>
+                  <View style={styles.toggleContent}>
+                    {t === 'income'
+                      ? <ArrowUp size={16} color={form.kind === t ? C.income : C.textMuted} weight="bold" />
+                      : <ArrowDown size={16} color={form.kind === t ? C.expense : C.textMuted} weight="bold" />}
+                    <Text style={[styles.toggleText, form.kind === t && { color: t === 'income' ? C.income : C.expense }]}>
+                      {t === 'income' ? 'Income' : 'Expense'}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
@@ -132,7 +140,6 @@ const makeStyles = (C) => StyleSheet.create({
   content: { padding: SPACING.md, paddingBottom: SPACING.xl },
   heroCard: { marginBottom: SPACING.md, padding: SPACING.lg, alignItems: 'center' },
   iconBg: { width: 64, height: 64, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', marginBottom: SPACING.sm },
-  icon: { color: '#fff', fontSize: 32, fontWeight: '700' },
   heroName: { color: C.textPrimary, fontSize: FONTS.sizes.xxl, fontWeight: '700', marginBottom: SPACING.sm },
   kindPill: { borderRadius: RADIUS.full, paddingHorizontal: SPACING.md, paddingVertical: 4 },
   kindText: { fontSize: FONTS.sizes.sm, fontWeight: '600' },
@@ -148,6 +155,7 @@ const makeStyles = (C) => StyleSheet.create({
   input: { backgroundColor: C.surfaceHigh, borderRadius: RADIUS.md, borderWidth: 1, borderColor: C.border, color: C.textPrimary, padding: SPACING.sm + 4, fontSize: FONTS.sizes.md },
   typeToggle: { flexDirection: 'row', gap: SPACING.sm },
   toggleBtn: { flex: 1, padding: SPACING.sm, borderRadius: RADIUS.md, borderWidth: 1, borderColor: C.border, alignItems: 'center', backgroundColor: C.surfaceHigh },
+  toggleContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   toggleText: { color: C.textMuted, fontWeight: '600', fontSize: FONTS.sizes.md },
   modalBtns: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.lg },
   halfBtn: { flex: 1 },

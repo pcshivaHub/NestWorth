@@ -3,24 +3,41 @@ import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   TextInput, Platform,
 } from 'react-native';
+import { ArrowUp, ArrowDown } from 'phosphor-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAccounts } from '../api/accounts';
 import { getCategories } from '../api/categories';
 import { createTransaction } from '../api/transactions';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
 import BankLogo from '../components/BankLogo';
 
+const ACCOUNT_TYPE_PRIORITY = ['savings', 'checking', 'cash', 'credit', 'fd', 'rd', 'mutual_fund', 'equity', 'lic', 'ppf', 'nps', 'other'];
+
+const sortAccountsByPriority = (accs) =>
+  [...accs].sort((a, b) => {
+    const pa = ACCOUNT_TYPE_PRIORITY.indexOf(a.type);
+    const pb = ACCOUNT_TYPE_PRIORITY.indexOf(b.type);
+    const diff = (pa === -1 ? 99 : pa) - (pb === -1 ? 99 : pb);
+    return diff !== 0 ? diff : a.name.localeCompare(b.name);
+  });
+
 export default function AddTransactionScreen({ navigation }) {
   const { colors: C } = useTheme();
   const styles = useMemo(() => makeStyles(C), [C]);
+  const { user } = useAuth();
 
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [successMsg, setSuccessMsg] = useState(null);
+
+  const [lastCatId, setLastCatId] = useState(null);
 
   const [form, setForm] = useState({
     account_id: null, category_id: null, amount: '',
@@ -30,9 +47,38 @@ export default function AddTransactionScreen({ navigation }) {
   useEffect(() => {
     const loadDropdowns = async () => {
       try {
-        const [accs, cats] = await Promise.all([getAccounts(), getCategories()]);
-        setAccounts(accs || []);
+        const [accs, cats, savedAccId, savedCatId, savedType] = await Promise.all([
+          getAccounts(), getCategories(),
+          AsyncStorage.getItem('LAST_TXN_ACCOUNT_ID').catch(() => null),
+          AsyncStorage.getItem('LAST_TXN_CATEGORY_ID').catch(() => null),
+          AsyncStorage.getItem('LAST_TXN_TYPE').catch(() => null),
+        ]);
+        const storedAccId = savedAccId || null;
+        const storedCatId = savedCatId || null;
+        const storedType = savedType || 'expense';
+
+        // Show user's savings/checking accounts; include accounts without user_id (pre-family data)
+        const sbAccs = (accs || []).filter(
+          (a) => ['savings', 'checking'].includes(a.type) &&
+                 (!a.user_id || a.user_id === user?.id)
+        );
+        // Put last-used first; otherwise sort by type priority
+        const sorted = storedAccId && sbAccs.find((a) => a.id === storedAccId)
+          ? [...sbAccs.filter((a) => a.id === storedAccId), ...sbAccs.filter((a) => a.id !== storedAccId)]
+          : sortAccountsByPriority(sbAccs);
+        setAccounts(sorted);
         setCategories(cats || []);
+        setLastCatId(storedCatId);
+
+        // Pre-select last-used if valid; otherwise default to first account
+        const validAcc = storedAccId && sbAccs.find((a) => a.id === storedAccId);
+        const validCat = storedCatId && (cats || []).find((c) => c.id === storedCatId && c.kind === storedType);
+        setForm((prev) => ({
+          ...prev,
+          type: storedType,
+          account_id: validAcc ? storedAccId : (sorted[0]?.id ?? null),
+          category_id: validCat ? storedCatId : null,
+        }));
       } catch (e) {
         setError('Could not load accounts/categories. Is the backend running?');
       } finally {
@@ -40,9 +86,13 @@ export default function AddTransactionScreen({ navigation }) {
       }
     };
     loadDropdowns();
-  }, []);
+  }, [user?.id]);
 
-  const filteredCategories = categories.filter((c) => c.kind === form.type);
+  const filteredCategories = useMemo(() => {
+    const cats = categories.filter((c) => c.kind === form.type);
+    if (!lastCatId) return cats;
+    return [...cats.filter((c) => c.id === lastCatId), ...cats.filter((c) => c.id !== lastCatId)];
+  }, [categories, form.type, lastCatId]);
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
   const handleSubmit = async () => {
@@ -58,7 +108,12 @@ export default function AddTransactionScreen({ navigation }) {
         amount: parseFloat(form.amount), type: form.type,
         txn_date: form.txn_date, note: form.note.trim() || null,
       });
-      navigation.goBack();
+      AsyncStorage.setItem('LAST_TXN_ACCOUNT_ID', String(form.account_id)).catch(() => {});
+      AsyncStorage.setItem('LAST_TXN_CATEGORY_ID', String(form.category_id)).catch(() => {});
+      AsyncStorage.setItem('LAST_TXN_TYPE', form.type).catch(() => {});
+      setForm((prev) => ({ ...prev, amount: '', note: '' }));
+      setSuccessMsg('Transaction saved!');
+      setTimeout(() => setSuccessMsg(null), 2500);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -79,9 +134,14 @@ export default function AddTransactionScreen({ navigation }) {
             style={[styles.typeBtn, form.type === t && { borderColor: t === 'income' ? C.income : C.expense, backgroundColor: t === 'income' ? C.incomeSubtle : C.expenseSubtle }]}
             onPress={() => { set('type', t); set('category_id', null); }}
           >
-            <Text style={[styles.typeBtnText, form.type === t && { color: t === 'income' ? C.income : C.expense }]}>
-              {t === 'income' ? '↑ Income' : '↓ Expense'}
-            </Text>
+            <View style={styles.typeBtnContent}>
+              {t === 'income'
+                ? <ArrowUp size={16} color={form.type === t ? C.income : C.textMuted} weight="bold" />
+                : <ArrowDown size={16} color={form.type === t ? C.expense : C.textMuted} weight="bold" />}
+              <Text style={[styles.typeBtnText, form.type === t && { color: t === 'income' ? C.income : C.expense }]}>
+                {t === 'income' ? 'Income' : 'Expense'}
+              </Text>
+            </View>
           </TouchableOpacity>
         ))}
       </View>
@@ -120,6 +180,12 @@ export default function AddTransactionScreen({ navigation }) {
       <Text style={styles.label}>Note (optional)</Text>
       <TextInput style={[styles.input, styles.noteInput]} placeholder="Add a note..." placeholderTextColor={C.textMuted} multiline value={form.note} onChangeText={(v) => set('note', v)} />
 
+      {successMsg && (
+        <View style={styles.successBox}>
+          <Text style={styles.successText}>✓ {successMsg}</Text>
+        </View>
+      )}
+
       {error && (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>⚠️ {error}</Text>
@@ -137,6 +203,7 @@ const makeStyles = (C) => StyleSheet.create({
   label: { color: C.textSecondary, fontSize: FONTS.sizes.sm, marginBottom: 8, marginTop: SPACING.md, fontWeight: '500' },
   typeToggle: { flexDirection: 'row', gap: SPACING.sm },
   typeBtn: { flex: 1, paddingVertical: SPACING.sm + 2, borderRadius: RADIUS.md, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.surfaceHigh, alignItems: 'center' },
+  typeBtnContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   typeBtnText: { color: C.textMuted, fontWeight: '700', fontSize: FONTS.sizes.md },
   input: { backgroundColor: C.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: C.border, color: C.textPrimary, padding: SPACING.sm + 4, fontSize: FONTS.sizes.md },
   amountInput: { fontSize: FONTS.sizes.xxl, fontWeight: '700', textAlign: 'center', paddingVertical: SPACING.md },
@@ -151,6 +218,8 @@ const makeStyles = (C) => StyleSheet.create({
   chipTextActive: { color: C.primaryLight, fontWeight: '600' },
   noData: { color: C.textMuted, fontSize: FONTS.sizes.sm, fontStyle: 'italic', paddingVertical: SPACING.sm },
   submitBtn: { marginTop: SPACING.xl },
+  successBox: { backgroundColor: C.incomeBg || C.incomeSubtle, borderWidth: 1, borderColor: C.income, borderRadius: RADIUS.md, padding: SPACING.sm + 4, marginTop: SPACING.md },
+  successText: { color: C.income, fontSize: FONTS.sizes.sm, fontWeight: '600' },
   errorBox: { backgroundColor: C.expenseBg, borderWidth: 1, borderColor: C.expense, borderRadius: RADIUS.md, padding: SPACING.sm + 4, marginTop: SPACING.md },
   errorText: { color: C.expense, fontSize: FONTS.sizes.sm },
 });
