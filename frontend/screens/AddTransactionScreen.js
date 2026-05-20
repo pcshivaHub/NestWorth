@@ -57,9 +57,9 @@ export default function AddTransactionScreen({ navigation }) {
         const storedCatId = savedCatId || null;
         const storedType = savedType || 'expense';
 
-        // Show user's savings/checking accounts; include accounts without user_id (pre-family data)
+        // Show user's savings/checking/credit accounts; include accounts without user_id (pre-family data)
         const sbAccs = (accs || []).filter(
-          (a) => ['savings', 'checking'].includes(a.type) &&
+          (a) => ['savings', 'checking', 'credit'].includes(a.type) &&
                  (!a.user_id || a.user_id === user?.id)
         );
         // Put last-used first; otherwise sort by type priority

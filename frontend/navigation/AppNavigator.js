@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
+import { NavigationContainer, DarkTheme, DefaultTheme, useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -195,8 +195,13 @@ function HamburgerMenu({ navigation }) {
 
 function AppHeaderTitle({ user, section }) {
   const { colors: C } = useTheme();
+  const navigation = useNavigation();
   return (
-    <View style={{ backgroundColor: C.surface, justifyContent: 'center' }}>
+    <TouchableOpacity
+      onPress={() => navigation.navigate('Dashboard')}
+      activeOpacity={0.75}
+      style={{ backgroundColor: C.surface, justifyContent: 'center' }}
+    >
       <Image
         source={require('../assets/nestworth-logo-header.png')}
         style={Platform.select({
@@ -205,7 +210,7 @@ function AppHeaderTitle({ user, section }) {
         })}
         resizeMode="contain"
       />
-    </View>
+    </TouchableOpacity>
   );
 }
 
