@@ -1078,7 +1078,11 @@ def get_transfers_for_account(db: Session, account_id: UUID, user_id: str):
 
 
 def delete_transfer(db: Session, transfer_id: UUID, user_id: str):
-    tr = db.query(Transfer).filter(Transfer.id == transfer_id, Transfer.user_id == UUID(user_id)).first()
+    family_ids = [UUID(uid) for uid in get_family_member_ids(db, user_id)]
+    tr = db.query(Transfer).filter(
+        Transfer.id == transfer_id,
+        Transfer.user_id.in_(family_ids),
+    ).first()
     if tr:
         db.delete(tr)
         db.commit()
@@ -1117,7 +1121,11 @@ def get_all_transfers(db: Session, user_id: str):
 
 
 def update_transfer(db: Session, transfer_id: UUID, data, user_id: str):
-    tr = db.query(Transfer).filter(Transfer.id == transfer_id, Transfer.user_id == UUID(user_id)).first()
+    family_ids = [UUID(uid) for uid in get_family_member_ids(db, user_id)]
+    tr = db.query(Transfer).filter(
+        Transfer.id == transfer_id,
+        Transfer.user_id.in_(family_ids),
+    ).first()
     if not tr:
         raise ValueError("Transfer not found")
     tr.from_account_id = data.from_account_id
