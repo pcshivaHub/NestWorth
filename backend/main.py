@@ -493,6 +493,27 @@ def get_account_transfers(
     return crud.get_transfers_for_account(db, account_id, user_id)
 
 
+@app.get("/transfers", response_model=List[TransferResponse])
+def get_transfers(ctx: Tuple[Session, str] = Depends(get_ctx)):
+    db, user_id = ctx
+    return crud.get_all_transfers(db, user_id)
+
+
+@app.put("/transfers/{transfer_id}", response_model=TransferResponse)
+def update_transfer(
+    transfer_id: UUID,
+    data: TransferCreate,
+    ctx: Tuple[Session, str] = Depends(get_ctx),
+):
+    db, user_id = ctx
+    if data.from_account_id == data.to_account_id:
+        raise HTTPException(status_code=400, detail="Cannot transfer to the same account")
+    try:
+        return crud.update_transfer(db, transfer_id, data, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @app.delete("/transfers/{transfer_id}")
 def delete_transfer(
     transfer_id: UUID,

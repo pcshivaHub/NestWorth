@@ -1056,7 +1056,6 @@ def get_net_worth_snapshot(db: Session, user_id: str) -> dict:
 # ─────────────────────────────────────────
 
 def create_transfer(db: Session, data, user_id: str):
-    from schemas import TransferCreate
     tr = Transfer(
         user_id         = UUID(user_id),
         from_account_id = data.from_account_id,
@@ -1068,44 +1067,14 @@ def create_transfer(db: Session, data, user_id: str):
     db.add(tr)
     db.commit()
     db.refresh(tr)
-    # enrich with account names
-    from_acc = db.query(Account).filter(Account.id == tr.from_account_id).first()
-    to_acc   = db.query(Account).filter(Account.id == tr.to_account_id).first()
-    return {
-        "id":               tr.id,
-        "user_id":          tr.user_id,
-        "from_account_id":  tr.from_account_id,
-        "to_account_id":    tr.to_account_id,
-        "from_account_name": from_acc.name if from_acc else None,
-        "to_account_name":   to_acc.name   if to_acc   else None,
-        "amount":           float(tr.amount),
-        "txn_date":         tr.txn_date,
-        "note":             tr.note,
-        "created_at":       tr.created_at,
-    }
+    return _enrich_transfer(db, tr)
 
 
 def get_transfers_for_account(db: Session, account_id: UUID, user_id: str):
     transfers = db.query(Transfer).filter(
         (Transfer.from_account_id == account_id) | (Transfer.to_account_id == account_id)
     ).order_by(Transfer.txn_date.desc()).all()
-    result = []
-    for tr in transfers:
-        from_acc = db.query(Account).filter(Account.id == tr.from_account_id).first()
-        to_acc   = db.query(Account).filter(Account.id == tr.to_account_id).first()
-        result.append({
-            "id":               tr.id,
-            "user_id":          tr.user_id,
-            "from_account_id":  tr.from_account_id,
-            "to_account_id":    tr.to_account_id,
-            "from_account_name": from_acc.name if from_acc else None,
-            "to_account_name":   to_acc.name   if to_acc   else None,
-            "amount":           float(tr.amount),
-            "txn_date":         tr.txn_date,
-            "note":             tr.note,
-            "created_at":       tr.created_at,
-        })
-    return result
+    return [_enrich_transfer(db, tr) for tr in transfers]
 
 
 def delete_transfer(db: Session, transfer_id: UUID, user_id: str):
@@ -1113,6 +1082,52 @@ def delete_transfer(db: Session, transfer_id: UUID, user_id: str):
     if tr:
         db.delete(tr)
         db.commit()
+
+
+def _enrich_transfer(db: Session, tr) -> dict:
+    from_acc = db.query(Account).filter(Account.id == tr.from_account_id).first()
+    to_acc   = db.query(Account).filter(Account.id == tr.to_account_id).first()
+    return {
+        "id":                tr.id,
+        "user_id":           tr.user_id,
+        "from_account_id":   tr.from_account_id,
+        "to_account_id":     tr.to_account_id,
+        "from_account_name": from_acc.name if from_acc else None,
+        "to_account_name":   to_acc.name   if to_acc   else None,
+        "amount":            float(tr.amount),
+        "txn_date":          tr.txn_date,
+        "note":              tr.note,
+        "created_at":        tr.created_at,
+    }
+
+
+def get_all_transfers(db: Session, user_id: str):
+    account_ids = [a.id for a in db.query(Account).filter(Account.user_id == UUID(user_id)).all()]
+    member = db.query(FamilyMember).filter(FamilyMember.user_id == UUID(user_id)).first()
+    if member:
+        family_ids = [
+            a.id for a in db.query(Account).join(FamilyMember, Account.user_id == FamilyMember.user_id)
+            .filter(FamilyMember.family_id == member.family_id).all()
+        ]
+        account_ids = list(set(account_ids + family_ids))
+    transfers = db.query(Transfer).filter(
+        (Transfer.from_account_id.in_(account_ids)) | (Transfer.to_account_id.in_(account_ids))
+    ).order_by(Transfer.txn_date.desc()).all()
+    return [_enrich_transfer(db, tr) for tr in transfers]
+
+
+def update_transfer(db: Session, transfer_id: UUID, data, user_id: str):
+    tr = db.query(Transfer).filter(Transfer.id == transfer_id, Transfer.user_id == UUID(user_id)).first()
+    if not tr:
+        raise ValueError("Transfer not found")
+    tr.from_account_id = data.from_account_id
+    tr.to_account_id   = data.to_account_id
+    tr.amount          = data.amount
+    tr.txn_date        = data.txn_date
+    tr.note            = data.note
+    db.commit()
+    db.refresh(tr)
+    return _enrich_transfer(db, tr)
 
 
 def get_expense_category_trends(db: Session, user_id: str, months: int = 6) -> dict:

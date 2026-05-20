@@ -4,7 +4,7 @@ import {
   TouchableOpacity, Modal, TextInput, Alert, ScrollView,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getAccounts, createAccount, getAccountBalance, createDepositDetail, createTransfer } from '../api/accounts';
+import { getAccounts, createAccount, getAccountBalance, createDepositDetail, createTransfer, getAllTransfers, updateTransfer, deleteTransfer } from '../api/accounts';
 import { getAssets, createAsset } from '../api/assets';
 import { getOutstandings, createOutstanding, settleOutstanding, deleteOutstanding } from '../api/outstandings';
 import { FONTS, SPACING, RADIUS, makeShadow } from '../utils/theme';
@@ -18,7 +18,7 @@ import ErrorBanner from '../components/ErrorBanner';
 import EmptyState from '../components/EmptyState';
 import BankLogo from '../components/BankLogo';
 import TypeIcon from '../components/TypeIcon';
-import { Bank, Briefcase, Handshake } from 'phosphor-react-native';
+import { Bank, Briefcase, Handshake, ArrowsLeftRight } from 'phosphor-react-native';
 
 const ACCOUNT_TYPES = ['savings', 'checking', 'cash', 'credit', 'fd', 'rd', 'mutual_fund', 'equity', 'lic', 'ppf', 'nps'];
 const TYPE_LABELS = {
@@ -70,8 +70,10 @@ export default function AccountsScreen({ navigation }) {
   const [outstandingForm, setOutstandingForm] = useState(EMPTY_OUTSTANDING_FORM);
   const [savingOutstanding, setSavingOutstanding] = useState(false);
 
+  const [transfers, setTransfers] = useState([]);
   const [transferModal, setTransferModal] = useState(false);
   const [transferForm, setTransferForm] = useState(EMPTY_TRANSFER_FORM);
+  const [editingTransferId, setEditingTransferId] = useState(null);
   const [savingTransfer, setSavingTransfer] = useState(false);
 
   const [showMine, setShowMine] = useState(true);
@@ -86,12 +88,13 @@ export default function AccountsScreen({ navigation }) {
   const load = async () => {
     try {
       setError(null);
-      const [list, assetList, outData] = await Promise.all([
-        getAccounts(), getAssets(), getOutstandings(showSettled),
+      const [list, assetList, outData, txfrList] = await Promise.all([
+        getAccounts(), getAssets(), getOutstandings(showSettled), getAllTransfers(),
       ]);
       setAccounts(list || []);
       setAssets(assetList || []);
       setOutstandings(outData || { total_lent: 0, total_borrowed: 0, net_outstanding: 0, items: [] });
+      setTransfers(txfrList || []);
       const bals = await Promise.allSettled(
         (list || []).map((a) => getAccountBalance(a.id).then((r) => ({ id: a.id, balance: r.balance })))
       );
@@ -194,22 +197,56 @@ export default function AccountsScreen({ navigation }) {
     if (!transferForm.amount || parseFloat(transferForm.amount) <= 0)
       return Alert.alert('Validation', 'Enter a valid amount.');
     setSavingTransfer(true);
+    const payload = {
+      from_account_id: transferForm.from_account_id,
+      to_account_id:   transferForm.to_account_id,
+      amount:          parseFloat(transferForm.amount),
+      txn_date:        transferForm.txn_date || new Date().toISOString().split('T')[0],
+      note:            transferForm.note.trim() || null,
+    };
     try {
-      await createTransfer({
-        from_account_id: transferForm.from_account_id,
-        to_account_id:   transferForm.to_account_id,
-        amount:          parseFloat(transferForm.amount),
-        txn_date:        transferForm.txn_date || new Date().toISOString().split('T')[0],
-        note:            transferForm.note.trim() || null,
-      });
+      if (editingTransferId) {
+        await updateTransfer(editingTransferId, payload);
+      } else {
+        await createTransfer(payload);
+      }
       setTransferModal(false);
       setTransferForm(EMPTY_TRANSFER_FORM);
+      setEditingTransferId(null);
       load();
     } catch (e) {
       Alert.alert('Error', e.message);
     } finally {
       setSavingTransfer(false);
     }
+  };
+
+  const handleTransferAction = (item) => {
+    Alert.alert(
+      `${item.from_account_name} → ${item.to_account_name}`,
+      `${formatCurrency(item.amount)} · ${formatDate(item.txn_date)}`,
+      [
+        {
+          text: 'Edit', onPress: () => {
+            setEditingTransferId(item.id);
+            setTransferForm({
+              from_account_id: item.from_account_id,
+              to_account_id:   item.to_account_id,
+              amount:          String(item.amount),
+              txn_date:        item.txn_date,
+              note:            item.note || '',
+            });
+            setTransferModal(true);
+          },
+        },
+        {
+          text: 'Delete', style: 'destructive', onPress: () => {
+            deleteTransfer(item.id).then(load).catch((e) => Alert.alert('Error', e.message));
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
   };
 
   const handleAddAsset = async () => {
@@ -284,6 +321,7 @@ export default function AccountsScreen({ navigation }) {
           { key: 'accounts',     label: 'Accounts' },
           { key: 'assets',       label: 'Assets' },
           { key: 'outstandings', label: 'Loans' },
+          { key: 'transfers',    label: 'Transfers' },
         ].map((s) => (
           <TouchableOpacity
             key={s.key}
@@ -297,7 +335,7 @@ export default function AccountsScreen({ navigation }) {
         ))}
       </View>
 
-      {section === 'accounts' ? (
+      {section === 'accounts' && (
         <FlatList
           data={(showMine && isFamily ? accounts.filter((a) => a.user_id === user?.id) : accounts).filter((a) => !acctTypeFilter || a.type === acctTypeFilter)}
           keyExtractor={(item) => String(item.id)}
@@ -337,7 +375,9 @@ export default function AccountsScreen({ navigation }) {
             );
           }}
         />
-      ) : (
+      )}
+
+      {section === 'assets' && (
         <FlatList
           data={showMine && isFamily ? assets.filter((a) => a.user_id === user?.id) : assets}
           keyExtractor={(item) => String(item.id)}
@@ -386,6 +426,39 @@ export default function AccountsScreen({ navigation }) {
               </TouchableOpacity>
             );
           }}
+        />
+      )}
+
+      {section === 'transfers' && (
+        <FlatList
+          data={transfers}
+          keyExtractor={(item) => String(item.id)}
+          contentContainerStyle={styles.list}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
+          ListEmptyComponent={<EmptyState icon={<ArrowsLeftRight size={48} color={C.textMuted} />} message="No transfers yet. Tap ⇄ to add one!" />}
+          renderItem={({ item }) => (
+            <TouchableOpacity onPress={() => handleTransferAction(item)}>
+              <Card style={styles.accountCard}>
+                <View style={styles.row}>
+                  <View style={[styles.transferIconWrap, { backgroundColor: C.primary + '22' }]}>
+                    <ArrowsLeftRight size={20} color={C.primaryLight} />
+                  </View>
+                  <View style={styles.info}>
+                    <View style={styles.transferRoute}>
+                      <BankLogo name={item.from_account_name} size={16} />
+                      <Text style={styles.transferArrow}> → </Text>
+                      <BankLogo name={item.to_account_name} size={16} />
+                      <Text style={styles.transferAccountName} numberOfLines={1}>
+                        {item.from_account_name} → {item.to_account_name}
+                      </Text>
+                    </View>
+                    <Text style={styles.txMeta}>{formatDate(item.txn_date)}{item.note ? ` · ${item.note}` : ''}</Text>
+                  </View>
+                  <Text style={[styles.balance, { color: C.primaryLight }]}>{formatCurrency(item.amount)}</Text>
+                </View>
+              </Card>
+            </TouchableOpacity>
+          )}
         />
       )}
 
@@ -459,28 +532,30 @@ export default function AccountsScreen({ navigation }) {
         />
       )}
 
-      {/* Transfer FAB (only on accounts section) */}
-      {section === 'accounts' && (
+      {/* Transfer FAB */}
+      {(section === 'accounts' || section === 'transfers') && (
         <TouchableOpacity
           style={[styles.fab, styles.fabTransfer]}
-          onPress={() => setTransferModal(true)}
+          onPress={() => { setEditingTransferId(null); setTransferForm(EMPTY_TRANSFER_FORM); setTransferModal(true); }}
           activeOpacity={0.85}
         >
           <Text style={styles.fabIcon}>⇄</Text>
         </TouchableOpacity>
       )}
 
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => {
-          if (section === 'accounts') setAccountModal(true);
-          else if (section === 'assets') setAssetModal(true);
-          else setOutstandingModal(true);
-        }}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.fabIcon}>+</Text>
-      </TouchableOpacity>
+      {section !== 'transfers' && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => {
+            if (section === 'accounts') setAccountModal(true);
+            else if (section === 'assets') setAssetModal(true);
+            else setOutstandingModal(true);
+          }}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.fabIcon}>+</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Account add modal */}
       <Modal visible={accountModal} animationType="slide" transparent>
@@ -705,7 +780,7 @@ export default function AccountsScreen({ navigation }) {
       <Modal visible={transferModal} animationType="slide" transparent>
         <View style={styles.overlay}>
           <ScrollView contentContainerStyle={styles.modal} keyboardShouldPersistTaps="handled">
-            <Text style={styles.modalTitle}>Transfer Money</Text>
+            <Text style={styles.modalTitle}>{editingTransferId ? 'Edit Transfer' : 'Transfer Money'}</Text>
 
             <Text style={styles.label}>From Account <Text style={styles.required}>*</Text></Text>
             <View style={styles.chipRow}>
@@ -772,8 +847,8 @@ export default function AccountsScreen({ navigation }) {
             />
 
             <View style={styles.modalBtns}>
-              <Button title="Cancel" variant="outline" onPress={() => { setTransferModal(false); setTransferForm(EMPTY_TRANSFER_FORM); }} style={styles.halfBtn} />
-              <Button title="Transfer" onPress={handleTransfer} loading={savingTransfer} style={styles.halfBtn} />
+              <Button title="Cancel" variant="outline" onPress={() => { setTransferModal(false); setTransferForm(EMPTY_TRANSFER_FORM); setEditingTransferId(null); }} style={styles.halfBtn} />
+              <Button title={editingTransferId ? 'Save' : 'Transfer'} onPress={handleTransfer} loading={savingTransfer} style={styles.halfBtn} />
             </View>
           </ScrollView>
         </View>
@@ -852,6 +927,14 @@ const makeStyles = (C) => StyleSheet.create({
   outStatDivider: { width: 1, backgroundColor: C.border, marginHorizontal: SPACING.sm },
   settledToggle: { alignSelf: 'flex-end', marginBottom: SPACING.sm, paddingVertical: 4, paddingHorizontal: SPACING.sm },
   settledToggleText: { fontSize: FONTS.sizes.xs, fontWeight: '600' },
+  transferIconWrap: {
+    width: 44, height: 44, borderRadius: RADIUS.lg,
+    alignItems: 'center', justifyContent: 'center', marginRight: SPACING.sm,
+  },
+  transferRoute: { flexDirection: 'row', alignItems: 'center' },
+  transferArrow: { color: C.textMuted, fontSize: FONTS.sizes.sm },
+  transferAccountName: { flex: 1, color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600', marginLeft: 4 },
+  txMeta: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 2 },
   outIconWrap: {
     width: 44, height: 44, borderRadius: RADIUS.lg,
     alignItems: 'center', justifyContent: 'center', marginRight: SPACING.sm,

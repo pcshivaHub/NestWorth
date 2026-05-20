@@ -21,6 +21,8 @@ export const closeDeposit = (accountId, data) =>
   apiClient.post(`/accounts/${accountId}/deposit/close`, data);
 
 export const createTransfer = (data) => apiClient.post('/transfers', data);
+export const getAllTransfers = () => apiClient.get('/transfers');
+export const updateTransfer = (transferId, data) => apiClient.put(`/transfers/${transferId}`, data);
 export const getAccountTransfers = (accountId) =>
   apiClient.get(`/accounts/${accountId}/transfers`);
 export const deleteTransfer = (transferId) => apiClient.delete(`/transfers/${transferId}`);
