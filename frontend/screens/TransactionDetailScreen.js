@@ -7,6 +7,7 @@ import { ArrowUp, ArrowDown } from 'phosphor-react-native';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { formatCurrency, formatDate } from '../utils/helpers';
+import { useAuth } from '../context/AuthContext';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import apiClient from '../api/config';
@@ -17,6 +18,7 @@ import BankLogo from '../components/BankLogo';
 export default function TransactionDetailScreen({ route, navigation }) {
   const { colors: C } = useTheme();
   const styles = useMemo(() => makeStyles(C), [C]);
+  const { user } = useAuth();
 
   const { transaction } = route.params;
   const [editModal, setEditModal] = useState(false);
@@ -36,11 +38,14 @@ export default function TransactionDetailScreen({ route, navigation }) {
   useEffect(() => {
     const load = async () => {
       const [accs, cats] = await Promise.all([getAccounts(), getCategories()]);
-      setAccounts(accs || []);
+      const filtered = (accs || []).filter(
+        (a) => ['savings', 'checking'].includes(a.type) && (!a.user_id || a.user_id === user?.id)
+      );
+      setAccounts(filtered);
       setCategories(cats || []);
     };
     load();
-  }, []);
+  }, [user?.id]);
 
   const filteredCategories = categories.filter((c) => c.kind === form.type);
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));

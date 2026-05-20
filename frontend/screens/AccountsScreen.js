@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, FlatList, StyleSheet, RefreshControl,
-  TouchableOpacity, Modal, TextInput, Alert, ScrollView,
+  TouchableOpacity, Modal, TextInput, Alert, ScrollView, Platform,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getAccounts, createAccount, getAccountBalance, createDepositDetail, createTransfer, getAllTransfers, updateTransfer, deleteTransfer } from '../api/accounts';
@@ -18,7 +18,7 @@ import ErrorBanner from '../components/ErrorBanner';
 import EmptyState from '../components/EmptyState';
 import BankLogo from '../components/BankLogo';
 import TypeIcon from '../components/TypeIcon';
-import { Bank, Briefcase, Handshake, ArrowsLeftRight } from 'phosphor-react-native';
+import { Bank, Briefcase, Handshake, ArrowsLeftRight, PencilSimple, Trash } from 'phosphor-react-native';
 
 const ACCOUNT_TYPES = ['savings', 'checking', 'cash', 'credit', 'fd', 'rd', 'mutual_fund', 'equity', 'lic', 'ppf', 'nps'];
 const TYPE_LABELS = {
@@ -221,29 +221,37 @@ export default function AccountsScreen({ navigation }) {
     }
   };
 
+  const openEditTransfer = (item) => {
+    setEditingTransferId(item.id);
+    setTransferForm({
+      from_account_id: item.from_account_id,
+      to_account_id:   item.to_account_id,
+      amount:          String(item.amount),
+      txn_date:        item.txn_date,
+      note:            item.note || '',
+    });
+    setTransferModal(true);
+  };
+
+  const confirmDeleteTransfer = (item) => {
+    const doDelete = () => deleteTransfer(item.id).then(load).catch((e) => Alert.alert('Error', e.message));
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete transfer of ${formatCurrency(item.amount)}?`)) doDelete();
+    } else {
+      Alert.alert('Delete Transfer', `Delete ${formatCurrency(item.amount)} from ${item.from_account_name} → ${item.to_account_name}?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: doDelete },
+      ]);
+    }
+  };
+
   const handleTransferAction = (item) => {
     Alert.alert(
       `${item.from_account_name} → ${item.to_account_name}`,
       `${formatCurrency(item.amount)} · ${formatDate(item.txn_date)}`,
       [
-        {
-          text: 'Edit', onPress: () => {
-            setEditingTransferId(item.id);
-            setTransferForm({
-              from_account_id: item.from_account_id,
-              to_account_id:   item.to_account_id,
-              amount:          String(item.amount),
-              txn_date:        item.txn_date,
-              note:            item.note || '',
-            });
-            setTransferModal(true);
-          },
-        },
-        {
-          text: 'Delete', style: 'destructive', onPress: () => {
-            deleteTransfer(item.id).then(load).catch((e) => Alert.alert('Error', e.message));
-          },
-        },
+        { text: 'Edit', onPress: () => openEditTransfer(item) },
+        { text: 'Delete', style: 'destructive', onPress: () => confirmDeleteTransfer(item) },
         { text: 'Cancel', style: 'cancel' },
       ]
     );
@@ -444,17 +452,29 @@ export default function AccountsScreen({ navigation }) {
                     <ArrowsLeftRight size={20} color={C.primaryLight} />
                   </View>
                   <View style={styles.info}>
-                    <View style={styles.transferRoute}>
-                      <BankLogo name={item.from_account_name} size={16} />
-                      <Text style={styles.transferArrow}> → </Text>
-                      <BankLogo name={item.to_account_name} size={16} />
-                      <Text style={styles.transferAccountName} numberOfLines={1}>
-                        {item.from_account_name} → {item.to_account_name}
-                      </Text>
-                    </View>
-                    <Text style={styles.txMeta}>{formatDate(item.txn_date)}{item.note ? ` · ${item.note}` : ''}</Text>
+                    <Text style={styles.transferAccountName} numberOfLines={1}>
+                      {item.from_account_name} → {item.to_account_name}
+                    </Text>
+                    <Text style={styles.txMeta}>
+                      {formatCurrency(item.amount)} · {formatDate(item.txn_date)}{item.note ? ` · ${item.note}` : ''}
+                    </Text>
                   </View>
-                  <Text style={[styles.balance, { color: C.primaryLight }]}>{formatCurrency(item.amount)}</Text>
+                  <View style={styles.transferActions}>
+                    <TouchableOpacity
+                      style={styles.actionBtn}
+                      onPress={() => openEditTransfer(item)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <PencilSimple size={18} color={C.primaryLight} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.actionBtn}
+                      onPress={() => confirmDeleteTransfer(item)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Trash size={18} color={C.expense} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </Card>
             </TouchableOpacity>
@@ -931,10 +951,14 @@ const makeStyles = (C) => StyleSheet.create({
     width: 44, height: 44, borderRadius: RADIUS.lg,
     alignItems: 'center', justifyContent: 'center', marginRight: SPACING.sm,
   },
-  transferRoute: { flexDirection: 'row', alignItems: 'center' },
-  transferArrow: { color: C.textMuted, fontSize: FONTS.sizes.sm },
-  transferAccountName: { flex: 1, color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600', marginLeft: 4 },
+  transferAccountName: { color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600' },
   txMeta: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 2 },
+  transferActions: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginLeft: SPACING.sm },
+  actionBtn: {
+    width: 34, height: 34, borderRadius: RADIUS.md,
+    backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
   outIconWrap: {
     width: 44, height: 44, borderRadius: RADIUS.lg,
     alignItems: 'center', justifyContent: 'center', marginRight: SPACING.sm,
