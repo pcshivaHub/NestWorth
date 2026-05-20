@@ -1,13 +1,13 @@
 import axios from 'axios';
 import { supabase } from './supabase';
 
-//export const BASE_URL = 'https://nestworthsvc-production.up.railway.app';
+export const BASE_URL = 'https://nestworthsvc-production.up.railway.app';
 //Work
 //export const BASE_URL = 'http://172.18.1.170:8081';
 //export const BASE_URL = 'http://10.127.196.32:8081';
 //Home
 //export const BASE_URL = 'http://192.168.29.29:8000';
-export const BASE_URL = 'http://localhost:8000';
+//export const BASE_URL = 'http://localhost:8000';
 
 
 
