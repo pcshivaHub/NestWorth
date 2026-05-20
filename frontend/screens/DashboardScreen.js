@@ -11,7 +11,7 @@ import { getAccounts, getAccountBalance } from '../api/accounts';
 import { FONTS, SPACING, RADIUS, makeShadow } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
-import { formatCurrency, formatDate, getInitials } from '../utils/helpers';
+import { formatCurrency, formatDate, getInitials, getMemberName } from '../utils/helpers';
 import Card from '../components/Card';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
@@ -118,13 +118,14 @@ export default function DashboardScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [breakupPeriod, setBreakupPeriod] = useState('month');
+  const [txFilter, setTxFilter] = useState('mine');
 
   const load = useCallback(async () => {
     try {
       setError(null);
       const [sum, txList, accs] = await Promise.all([getSummary(breakupPeriod), getTransactions(), getAccounts()]);
       setSummary(sum);
-      setRecentTx((txList || []).slice(0, 5));
+      setRecentTx(txList || []);
       setAccounts(accs || []);
       const balResults = await Promise.allSettled(
         (accs || []).map((a) => getAccountBalance(a.id).then((r) => ({ id: a.id, balance: r.balance })))
@@ -144,6 +145,15 @@ export default function DashboardScreen({ navigation }) {
   const onRefresh = () => { setRefreshing(true); load(); };
 
   if (loading) return <LoadingSpinner />;
+
+  const isFamily = (family?.members?.length ?? 0) > 1;
+  const memberMap = Object.fromEntries(
+    (family?.members || []).map((m) => [m.user_id, getMemberName(m, user)])
+  );
+  const filteredTx = (txFilter === 'mine'
+    ? recentTx.filter((tx) => tx.user_id === user?.id)
+    : recentTx
+  ).slice(0, 5);
 
   const ENTITY_THEME = {
     netBalance: { color: C.netBalance, label: 'Net Balance' },
@@ -319,34 +329,56 @@ export default function DashboardScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      {recentTx.length === 0 ? (
+      {isFamily && (
+        <View style={styles.txFilterRow}>
+          {[{ key: 'mine', label: 'Mine' }, { key: 'all', label: 'All' }].map((f) => (
+            <TouchableOpacity
+              key={f.key}
+              style={[styles.txFilterChip, txFilter === f.key && styles.txFilterChipActive]}
+              onPress={() => setTxFilter(f.key)}
+            >
+              <Text style={[styles.txFilterText, txFilter === f.key && styles.txFilterTextActive]}>
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {filteredTx.length === 0 ? (
         <Text style={styles.emptyText}>No transactions yet. Add one!</Text>
       ) : (
-        recentTx.map((tx) => (
-          <TouchableOpacity key={tx.id} onPress={() => navigation.navigate('Transactions')}>
-            <Card style={styles.txCard}>
-              <View style={styles.txRow}>
-                <View style={[styles.txIconBg, { backgroundColor: tx.type === 'income' ? C.incomeSubtle : C.expenseSubtle }]}>
-                  <Ionicons
-                    name={tx.type === 'income' ? 'arrow-up' : 'arrow-down'}
-                    size={18}
-                    color={tx.type === 'income' ? C.income : C.expense}
-                  />
-                </View>
-                <View style={styles.txInfo}>
-                  <Text style={styles.txCategory}>{tx.category_name || '—'}</Text>
-                  <View style={styles.txAccountRow}>
-                    <BankLogo name={tx.account_name} size={18} style={styles.txBankLogo} />
-                    <Text style={styles.txAccount}>{tx.account_name} · {formatDate(tx.txn_date)}</Text>
+        filteredTx.map((tx) => {
+          const isOther = tx.user_id && tx.user_id !== user?.id;
+          return (
+            <TouchableOpacity key={tx.id} onPress={() => navigation.navigate('Transactions')}>
+              <Card style={styles.txCard}>
+                <View style={styles.txRow}>
+                  <View style={[styles.txIconBg, { backgroundColor: tx.type === 'income' ? C.incomeSubtle : C.expenseSubtle }]}>
+                    <Ionicons
+                      name={tx.type === 'income' ? 'arrow-up' : 'arrow-down'}
+                      size={18}
+                      color={tx.type === 'income' ? C.income : C.expense}
+                    />
                   </View>
+                  <View style={styles.txInfo}>
+                    <Text style={styles.txCategory}>{tx.category_name || '—'}</Text>
+                    <View style={styles.txAccountRow}>
+                      <BankLogo name={tx.account_name} size={18} style={styles.txBankLogo} />
+                      <Text style={styles.txAccount}>{tx.account_name} · {formatDate(tx.txn_date)}</Text>
+                    </View>
+                    {isOther && (
+                      <Text style={styles.txOwner}>by {memberMap[tx.user_id] || 'Family Member'}</Text>
+                    )}
+                  </View>
+                  <Text style={[styles.txAmount, { color: tx.type === 'income' ? C.income : C.expense }]}>
+                    {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
+                  </Text>
                 </View>
-                <Text style={[styles.txAmount, { color: tx.type === 'income' ? C.income : C.expense }]}>
-                  {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
-                </Text>
-              </View>
-            </Card>
-          </TouchableOpacity>
-        ))
+              </Card>
+            </TouchableOpacity>
+          );
+        })
       )}
     </ScrollView>
   );
@@ -424,6 +456,12 @@ const makeStyles = (C) => StyleSheet.create({
   seeAll: { color: C.primary, fontSize: FONTS.sizes.sm },
   emptyText: { color: C.textMuted, fontSize: FONTS.sizes.sm, textAlign: 'center', paddingVertical: SPACING.lg },
 
+  txFilterRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm },
+  txFilterChip: { paddingHorizontal: SPACING.md, paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
+  txFilterChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
+  txFilterText: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '600' },
+  txFilterTextActive: { color: C.primaryLight },
+
   txCard: { marginBottom: SPACING.sm, padding: SPACING.sm + 4 },
   txRow: { flexDirection: 'row', alignItems: 'center' },
   txIconBg: { width: 40, height: 40, borderRadius: RADIUS.md, alignItems: 'center', justifyContent: 'center', marginRight: SPACING.sm },
@@ -432,5 +470,6 @@ const makeStyles = (C) => StyleSheet.create({
   txAccountRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   txBankLogo: { marginRight: 6 },
   txAccount: { flex: 1, color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 2 },
+  txOwner: { color: C.primaryLight, fontSize: FONTS.sizes.xs, fontWeight: '600', marginTop: 2 },
   txAmount: { fontSize: FONTS.sizes.md, fontWeight: '700' },
 });
