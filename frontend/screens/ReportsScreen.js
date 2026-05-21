@@ -6,7 +6,7 @@ import { BarChart, PieChart, LineChart } from 'react-native-gifted-charts';
 import {
   getTrend, getCategoryBreakdown, getBudgetVsActual,
   getNetWorthTrend, getNetWorthSnapshot, getFamilyBreakdown,
-  getAssetPortfolio, getExpenseCategoryTrends,
+  getAssetPortfolio, getExpenseCategoryTrends, getCCReport,
 } from '../api/reports';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
@@ -19,8 +19,10 @@ import EmptyState from '../components/EmptyState';
 import TypeIcon from '../components/TypeIcon';
 import {
   ChartBar, ChartPieSlice, ClipboardText, Briefcase, TrendUp, TrendDown,
-  UsersThree, ArrowUpRight, ArrowDownLeft,
+  UsersThree, ArrowUpRight, ArrowDownLeft, CreditCard,
 } from 'phosphor-react-native';
+import BankLogo from '../components/BankLogo';
+import { formatDate } from '../utils/helpers';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const CHART_WIDTH = SCREEN_WIDTH - SPACING.md * 2 - 32;
@@ -34,6 +36,7 @@ const SUB_TABS = [
   { key: 'categories',     label: 'Categories' },
   { key: 'expense_trends', label: 'Exp. Trends' },
   { key: 'budget',         label: 'Budget' },
+  { key: 'cc',             label: 'Credit Cards' },
   { key: '__w',            label: 'WEALTH',         isHeader: true },
   { key: 'assets',         label: 'Assets' },
   { key: 'networth',       label: 'Net Worth' },
@@ -577,6 +580,127 @@ function NetWorthSnapshotCard({ C, styles }) {
   );
 }
 
+// ─── CreditCardReport ──────────────────────────────────
+
+function CreditCardReport({ period, C, styles }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    try { setError(null); setLoading(true); setData(await getCCReport(period)); }
+    catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [period]);
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <LoadingSpinner />;
+  if (error) return <ErrorBanner message={error} onRetry={load} />;
+  if (!data) return null;
+
+  if (data.cards.length === 0) {
+    return <EmptyState icon={<CreditCard size={48} color={C.textMuted} />} message="No credit card accounts found. Add a credit account to get started." />;
+  }
+
+  const hasTransactions = data.transactions.length > 0;
+
+  const pieData = (data.by_category || []).map((item, i) => ({
+    value: item.amount,
+    color: PALETTE[i % PALETTE.length],
+    text: item.percentage > 5 ? `${item.percentage}%` : '',
+  }));
+
+  return (
+    <View>
+      {/* Summary stats */}
+      <View style={styles.statsRow}>
+        <StatItem label="Total Spend" value={formatCurrency(data.total_spend)} color={C.expense} styles={styles} />
+        {data.total_refund > 0 && (
+          <StatItem label="Refunds" value={formatCurrency(data.total_refund)} color={C.income} styles={styles} />
+        )}
+        <StatItem label="Net Spend" value={formatCurrency(data.net_spend)} color={data.net_spend > 0 ? C.expense : C.income} styles={styles} />
+      </View>
+
+      {/* Per-card breakdown */}
+      {data.cards.length > 1 && (
+        <>
+          <Text style={styles.heroSubLabel}>BY CARD</Text>
+          {data.cards.map((card) => {
+            const pct = data.total_spend > 0 ? card.spend / data.total_spend : 0;
+            return (
+              <View key={card.account_id} style={styles.ccCardRow}>
+                <BankLogo name={card.account_name} size={28} />
+                <View style={{ flex: 1, marginLeft: SPACING.sm }}>
+                  <View style={styles.ccCardTop}>
+                    <Text style={styles.ccCardName} numberOfLines={1}>{card.account_name}</Text>
+                    <Text style={[styles.ccCardAmt, { color: C.expense }]}>{formatCurrency(card.spend)}</Text>
+                  </View>
+                  <View style={styles.ccBarTrack}>
+                    <View style={[styles.ccBarFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: C.expense }]} />
+                  </View>
+                  {card.refund > 0 && (
+                    <Text style={[styles.ccRefundLabel, { color: C.income }]}>Refund: {formatCurrency(card.refund)}</Text>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+          <View style={styles.snapshotDivider} />
+        </>
+      )}
+
+      {/* Category breakdown — pie chart */}
+      {!hasTransactions ? (
+        <EmptyState icon={<CreditCard size={48} color={C.textMuted} />} message="No CC transactions for this period." />
+      ) : (
+        <>
+          <Text style={styles.heroSubLabel}>BY CATEGORY</Text>
+          {pieData.length > 0 && (
+            <View style={styles.pieWrap}>
+              <PieChart
+                data={pieData} donut radius={110} innerRadius={70}
+                centerLabelComponent={() => (
+                  <View style={{ alignItems: 'center' }}>
+                    <Text style={[styles.pieCenter, { color: C.textPrimary }]}>{formatCurrency(data.net_spend)}</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 10 }}>Net Spend</Text>
+                  </View>
+                )}
+                textColor={C.textPrimary} textSize={11}
+              />
+            </View>
+          )}
+          <View style={styles.legendGrid}>
+            {(data.by_category || []).map((item, i) => (
+              <View key={item.category_id || item.category_name} style={styles.legendGridItem}>
+                <LegendDot color={PALETTE[i % PALETTE.length]} label={`${item.category_name} (${item.percentage}%)`} styles={styles} />
+                <Text style={[styles.legendAmt, { color: C.expense }]}>{formatCurrency(item.amount)}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Transaction list */}
+          <View style={styles.snapshotDivider} />
+          <Text style={styles.heroSubLabel}>TRANSACTIONS</Text>
+          {data.transactions.map((tx) => (
+            <View key={tx.id} style={styles.ccTxRow}>
+              <View style={[styles.ccTxIcon, { backgroundColor: tx.type === 'income' ? C.incomeSubtle : C.expenseSubtle }]}>
+                <CreditCard size={14} color={tx.type === 'income' ? C.income : C.expense} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.ccTxCategory} numberOfLines={1}>{tx.category_name || '—'}</Text>
+                <Text style={styles.ccTxMeta} numberOfLines={1}>{tx.account_name} · {formatDate(tx.txn_date)}</Text>
+              </View>
+              <Text style={[styles.ccTxAmt, { color: tx.type === 'income' ? C.income : C.expense }]}>
+                {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
+              </Text>
+            </View>
+          ))}
+        </>
+      )}
+    </View>
+  );
+}
+
 // ─── ReportsScreen ─────────────────────────────────────
 
 export default function ReportsScreen() {
@@ -587,7 +711,7 @@ export default function ReportsScreen() {
   const [period, setPeriod] = useState('month');
   const [months, setMonths] = useState(6);
 
-  const showPeriod = ['categories', 'budget', 'family'].includes(activeTab);
+  const showPeriod = ['categories', 'budget', 'family', 'cc'].includes(activeTab);
   const showMonths = ['trend', 'networth', 'expense_trends'].includes(activeTab);
 
   return (
@@ -658,6 +782,7 @@ export default function ReportsScreen() {
           </>
         )}
         {activeTab === 'family'         && <FamilyReport period={period} C={C} styles={styles} />}
+        {activeTab === 'cc'             && <CreditCardReport period={period} C={C} styles={styles} />}
       </Card>
     </ScrollView>
   );
@@ -764,4 +889,17 @@ const makeStyles = (C) => StyleSheet.create({
   memberStat: {},
   memberStatLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs },
   memberStatValue: { fontSize: FONTS.sizes.md, fontWeight: '700' },
+
+  ccCardRow: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.sm },
+  ccCardTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+  ccCardName: { color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600', flex: 1 },
+  ccCardAmt: { fontSize: FONTS.sizes.sm, fontWeight: '700' },
+  ccBarTrack: { height: 5, borderRadius: 3, backgroundColor: C.border, overflow: 'hidden' },
+  ccBarFill: { height: '100%', borderRadius: 3 },
+  ccRefundLabel: { fontSize: FONTS.sizes.xs, fontWeight: '600', marginTop: 3 },
+  ccTxRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border, gap: SPACING.sm },
+  ccTxIcon: { width: 30, height: 30, borderRadius: RADIUS.sm, alignItems: 'center', justifyContent: 'center' },
+  ccTxCategory: { color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600' },
+  ccTxMeta: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 2 },
+  ccTxAmt: { fontSize: FONTS.sizes.sm, fontWeight: '700' },
 });

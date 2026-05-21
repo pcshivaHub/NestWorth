@@ -8,3 +8,4 @@ export const getNetWorthSnapshot       = ()                  => apiClient.get('/
 export const getFamilyBreakdown        = (period = 'month') => apiClient.get('/reports/family-breakdown', { params: { period } });
 export const getAssetPortfolio         = ()                  => apiClient.get('/reports/asset-portfolio');
 export const getExpenseCategoryTrends  = (months = 6)       => apiClient.get('/reports/expense-category-trends', { params: { months } });
+export const getCCReport               = (period = 'month') => apiClient.get('/reports/cc-summary', { params: { period } });

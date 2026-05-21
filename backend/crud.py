@@ -685,6 +685,74 @@ def get_category_breakdown(db: Session, user_id: str, period: str = "month") -> 
     return {"total_expense": total, "breakdown": breakdown}
 
 
+def get_cc_report(db: Session, user_id: str, period: str = "month") -> dict:
+    member_ids = [UUID(uid) for uid in get_family_member_ids(db, user_id)]
+
+    cc_accounts = (
+        db.query(Account)
+        .filter(Account.user_id.in_(member_ids), Account.type == "credit")
+        .all()
+    )
+    if not cc_accounts:
+        return {"total_spend": 0.0, "total_refund": 0.0, "net_spend": 0.0, "cards": [], "by_category": [], "transactions": []}
+
+    cc_ids = [a.id for a in cc_accounts]
+    txns = (
+        db.query(Transaction)
+        .filter(Transaction.account_id.in_(cc_ids))
+        .order_by(Transaction.txn_date.desc())
+        .all()
+    )
+    period_txns = [t for t in txns if _period_filter(t.txn_date, period)]
+
+    card_map = {a.id: {"account_id": str(a.id), "account_name": a.name, "spend": 0.0, "refund": 0.0} for a in cc_accounts}
+    by_cat: dict = {}
+
+    for t in period_txns:
+        if t.type == "expense":
+            card_map[t.account_id]["spend"] += float(t.amount)
+            key = str(t.category_id) if t.category_id else "uncategorized"
+            if key not in by_cat:
+                by_cat[key] = {
+                    "category_id": str(t.category_id) if t.category_id else None,
+                    "category_name": t.category.name if t.category else "Uncategorized",
+                    "amount": 0.0,
+                }
+            by_cat[key]["amount"] += float(t.amount)
+        else:
+            card_map[t.account_id]["refund"] += float(t.amount)
+
+    total_spend = sum(c["spend"] for c in card_map.values())
+    total_refund = sum(c["refund"] for c in card_map.values())
+
+    breakdown = sorted(by_cat.values(), key=lambda x: -x["amount"])
+    for item in breakdown:
+        item["percentage"] = round(item["amount"] / total_spend * 100, 1) if total_spend else 0.0
+
+    tx_list = [
+        {
+            "id": str(t.id),
+            "account_id": str(t.account_id),
+            "account_name": t.account.name if t.account else None,
+            "category_name": t.category.name if t.category else None,
+            "amount": float(t.amount),
+            "type": t.type,
+            "txn_date": str(t.txn_date),
+            "note": t.note,
+        }
+        for t in period_txns[:50]
+    ]
+
+    return {
+        "total_spend": round(total_spend, 2),
+        "total_refund": round(total_refund, 2),
+        "net_spend": round(total_spend - total_refund, 2),
+        "cards": sorted(card_map.values(), key=lambda x: -x["spend"]),
+        "by_category": breakdown,
+        "transactions": tx_list,
+    }
+
+
 def get_budget_vs_actual(db: Session, user_id: str, period: str = "month") -> dict:
     family_id = _get_user_family_id(db, user_id)
     member_ids = [UUID(uid) for uid in get_family_member_ids(db, user_id)]

@@ -423,6 +423,14 @@ def report_expense_category_trends(months: int = 6, ctx: Tuple[Session, str] = D
     return crud.get_expense_category_trends(db, uid, months=months)
 
 
+@app.get("/reports/cc-summary")
+def report_cc_summary(period: str = "month", ctx: Tuple[Session, str] = Depends(get_ctx)):
+    db, uid = ctx
+    if period not in ("week", "month", "year"):
+        raise HTTPException(status_code=400, detail="period must be week, month, or year")
+    return crud.get_cc_report(db, uid, period=period)
+
+
 # ─────────────────────────────────────────
 # OUTSTANDINGS
 # ─────────────────────────────────────────
