@@ -94,7 +94,7 @@ export default function TransactionsScreen({ navigation, route }) {
   });
 
   const sbAccounts = useMemo(() => {
-    const sb = accounts.filter((a) => ['savings', 'checking'].includes(a.type));
+    const sb = accounts.filter((a) => ['savings', 'checking', 'credit'].includes(a.type));
     if (!lastAccountId) return sb;
     return [...sb.filter((a) => a.id === lastAccountId), ...sb.filter((a) => a.id !== lastAccountId)];
   }, [accounts, lastAccountId]);
