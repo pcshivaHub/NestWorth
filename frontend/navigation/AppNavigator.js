@@ -8,6 +8,7 @@ import {
   Modal, Animated, Pressable, ScrollView, Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { House, Receipt, Bank, ChartBar } from 'phosphor-react-native';
 import { FONTS, RADIUS, SPACING, makeShadow } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -64,7 +65,7 @@ function NestWorthText({ fontSize, fontWeight = '800', letterSpacing = 1 }) {
   );
 }
 
-const TAB_ICONS = { Dashboard: '🏠', Transactions: '🧾', Accounts: '🏦' };
+const TAB_ICONS = { Dashboard: House, Transactions: Receipt, Accounts: Bank, Reports: ChartBar };
 
 const DRAWER_ITEMS = [
   { name: 'Dashboard',    icon: 'home-outline',         label: 'Dashboard' },
@@ -84,7 +85,7 @@ const getDisplayName = (user) =>
 
 function HamburgerMenu({ navigation }) {
   const [open, setOpen] = useState(false);
-  const { colors: C } = useTheme();
+  const { colors: C, isDark, toggleTheme } = useTheme();
   const { user } = useAuth();
   const slideAnim = useRef(new Animated.Value(-300)).current;
 
@@ -168,6 +169,17 @@ function HamburgerMenu({ navigation }) {
             </View>
 
             <ScrollView contentContainerStyle={styles.drawerItems}>
+              <TouchableOpacity
+                style={[styles.drawerItem, { borderBottomColor: C.border }]}
+                onPress={toggleTheme}
+              >
+                <View style={[styles.drawerItemIcon, { backgroundColor: C.primary + '22' }]}>
+                  <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={20} color={C.primaryLight} />
+                </View>
+                <Text style={[styles.drawerItemLabel, { color: C.textPrimary }]}>
+                  {isDark ? 'Light Mode' : 'Dark Mode'}
+                </Text>
+              </TouchableOpacity>
               {DRAWER_ITEMS.map((item) => (
                 <TouchableOpacity
                   key={item.name}
@@ -257,7 +269,6 @@ function LogoutIcon() {
 function HeaderRight() {
   return (
     <View style={styles.headerRight}>
-      <ThemeToggle />
       <LogoutIcon />
     </View>
   );
@@ -283,11 +294,11 @@ function TabNavigator() {
         headerTitle: () => <AppHeaderTitle user={user} section={route.name} />,
         headerLeft: () => <HamburgerMenu navigation={navigation} />,
         headerRight: () => <HeaderRight />,
-        tabBarIcon: ({ focused }) => (
-          <Text style={{ fontSize: focused ? 22 : 19, opacity: focused ? 1 : 0.5 }}>
-            {TAB_ICONS[route.name]}
-          </Text>
-        ),
+        tabBarIcon: ({ focused }) => {
+          const Icon = TAB_ICONS[route.name];
+          if (!Icon) return null;
+          return <Icon size={focused ? 24 : 22} color={focused ? C.primaryLight : C.textMuted} weight={focused ? 'fill' : 'regular'} />;
+        },
         tabBarLabel: ({ focused, children }) => (
           <Text style={{
             color: focused ? C.primaryLight : C.textMuted,
@@ -310,9 +321,9 @@ function TabNavigator() {
       <Tab.Screen name="Dashboard" component={DashboardScreen} />
       <Tab.Screen name="Transactions" component={TransactionsScreen} />
       <Tab.Screen name="Accounts" component={AccountsScreen} />
+      <Tab.Screen name="Reports" component={ReportsScreen} />
       <Tab.Screen name="Categories" component={CategoriesScreen} options={{ tabBarButton: () => null }} />
       <Tab.Screen name="Family" component={FamilyScreen} options={{ tabBarButton: () => null }} />
-      <Tab.Screen name="Reports" component={ReportsScreen} options={{ tabBarButton: () => null }} />
     </Tab.Navigator>
   );
 }
