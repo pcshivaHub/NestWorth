@@ -40,8 +40,7 @@ export default function TransactionDetailScreen({ route, navigation }) {
     const load = async () => {
       const [accs, cats] = await Promise.all([getAccounts(), getCategories()]);
       const filtered = (accs || []).filter((a) =>
-        (['savings', 'checking', 'credit'].includes(a.type) && (!a.user_id || a.user_id === user?.id)) ||
-        (['savings', 'checking'].includes(a.type) && a.user_id && a.user_id !== user?.id)
+        ['savings', 'checking', 'credit'].includes(a.type)
       );
       setAccounts(filtered);
       setCategories(cats || []);

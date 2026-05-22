@@ -60,8 +60,7 @@ export default function AddTransactionScreen({ navigation }) {
 
         // My accounts: savings/checking/credit; others: savings/checking only
         const allAccs = (accs || []).filter((a) =>
-          (['savings', 'checking', 'credit'].includes(a.type) && (!a.user_id || a.user_id === user?.id)) ||
-          (['savings', 'checking'].includes(a.type) && a.user_id && a.user_id !== user?.id)
+          ['savings', 'checking', 'credit'].includes(a.type)
         );
         const sorted = sortAccountsByPriority(allAccs);
         setAccounts(sorted);
