@@ -8,6 +8,7 @@ import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { formatCurrency, formatDate } from '../utils/helpers';
 import { useAuth } from '../context/AuthContext';
+import { getMemberName } from '../utils/helpers';
 import Button from '../components/Button';
 import Card from '../components/Card';
 import apiClient from '../api/config';
@@ -18,7 +19,7 @@ import BankLogo from '../components/BankLogo';
 export default function TransactionDetailScreen({ route, navigation }) {
   const { colors: C } = useTheme();
   const styles = useMemo(() => makeStyles(C), [C]);
-  const { user } = useAuth();
+  const { user, family } = useAuth();
 
   const { transaction } = route.params;
   const [editModal, setEditModal] = useState(false);
@@ -38,8 +39,9 @@ export default function TransactionDetailScreen({ route, navigation }) {
   useEffect(() => {
     const load = async () => {
       const [accs, cats] = await Promise.all([getAccounts(), getCategories()]);
-      const filtered = (accs || []).filter(
-        (a) => ['savings', 'checking', 'credit'].includes(a.type) && (!a.user_id || a.user_id === user?.id)
+      const filtered = (accs || []).filter((a) =>
+        (['savings', 'checking', 'credit'].includes(a.type) && (!a.user_id || a.user_id === user?.id)) ||
+        (['savings', 'checking'].includes(a.type) && a.user_id && a.user_id !== user?.id)
       );
       setAccounts(filtered);
       setCategories(cats || []);
@@ -157,16 +159,31 @@ export default function TransactionDetailScreen({ route, navigation }) {
               <TextInput style={[styles.input, styles.amountInput]} keyboardType="numeric" placeholderTextColor={C.textMuted} value={form.amount} onChangeText={(v) => set('amount', v)} />
 
               <Text style={styles.label}>Account</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {accounts.map((a) => (
+              {(() => {
+                const isFamily = (family?.members?.length ?? 0) > 1;
+                const myAccs = accounts.filter((a) => !a.user_id || a.user_id === user?.id);
+                const othersAccs = accounts.filter((a) => a.user_id && a.user_id !== user?.id);
+                const renderChip = (a) => (
                   <TouchableOpacity key={a.id} style={[styles.chip, form.account_id === a.id && styles.chipActive]} onPress={() => set('account_id', a.id)}>
                     <View style={styles.accountChipContent}>
                       <BankLogo name={a.name} size={18} style={styles.accountChipLogo} />
                       <Text style={[styles.chipText, form.account_id === a.id && styles.chipTextActive]}>{a.name}</Text>
                     </View>
                   </TouchableOpacity>
-                ))}
-              </ScrollView>
+                );
+                return (
+                  <View>
+                    {isFamily && myAccs.length > 0 && <Text style={styles.groupLabel}>MY ACCOUNTS</Text>}
+                    <View style={styles.chipGrid}>{myAccs.map(renderChip)}</View>
+                    {othersAccs.length > 0 && (
+                      <>
+                        <Text style={styles.groupLabel}>FAMILY ACCOUNTS</Text>
+                        <View style={styles.chipGrid}>{othersAccs.map(renderChip)}</View>
+                      </>
+                    )}
+                  </View>
+                );
+              })()}
 
               <Text style={styles.label}>Category</Text>
               <View style={styles.chipGrid}>
@@ -222,6 +239,7 @@ const makeStyles = (C) => StyleSheet.create({
   toggleContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   toggleText: { color: C.textMuted, fontWeight: '600', fontSize: FONTS.sizes.md },
   chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  groupLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '700', letterSpacing: 1.5, marginTop: SPACING.sm, marginBottom: 6 },
   chip: { paddingHorizontal: SPACING.md, paddingVertical: 8, borderRadius: RADIUS.full, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.surfaceHigh, marginRight: 8, marginBottom: 4 },
   chipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
   accountChipContent: { flexDirection: 'row', alignItems: 'center' },

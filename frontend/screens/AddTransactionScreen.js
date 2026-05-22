@@ -11,6 +11,7 @@ import { createTransaction } from '../api/transactions';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { getMemberName } from '../utils/helpers';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
 import BankLogo from '../components/BankLogo';
@@ -28,7 +29,7 @@ const sortAccountsByPriority = (accs) =>
 export default function AddTransactionScreen({ navigation }) {
   const { colors: C } = useTheme();
   const styles = useMemo(() => makeStyles(C), [C]);
-  const { user } = useAuth();
+  const { user, family } = useAuth();
 
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -57,21 +58,18 @@ export default function AddTransactionScreen({ navigation }) {
         const storedCatId = savedCatId || null;
         const storedType = savedType || 'expense';
 
-        // Show user's savings/checking/credit accounts; include accounts without user_id (pre-family data)
-        const sbAccs = (accs || []).filter(
-          (a) => ['savings', 'checking', 'credit'].includes(a.type) &&
-                 (!a.user_id || a.user_id === user?.id)
+        // My accounts: savings/checking/credit; others: savings/checking only
+        const allAccs = (accs || []).filter((a) =>
+          (['savings', 'checking', 'credit'].includes(a.type) && (!a.user_id || a.user_id === user?.id)) ||
+          (['savings', 'checking'].includes(a.type) && a.user_id && a.user_id !== user?.id)
         );
-        // Put last-used first; otherwise sort by type priority
-        const sorted = storedAccId && sbAccs.find((a) => a.id === storedAccId)
-          ? [...sbAccs.filter((a) => a.id === storedAccId), ...sbAccs.filter((a) => a.id !== storedAccId)]
-          : sortAccountsByPriority(sbAccs);
+        const sorted = sortAccountsByPriority(allAccs);
         setAccounts(sorted);
         setCategories(cats || []);
         setLastCatId(storedCatId);
 
         // Pre-select last-used if valid; otherwise default to first account
-        const validAcc = storedAccId && sbAccs.find((a) => a.id === storedAccId);
+        const validAcc = storedAccId && sorted.find((a) => a.id === storedAccId);
         const validCat = storedCatId && (cats || []).find((c) => c.id === storedCatId && c.kind === storedType);
         setForm((prev) => ({
           ...prev,
@@ -150,16 +148,32 @@ export default function AddTransactionScreen({ navigation }) {
       <TextInput style={[styles.input, styles.amountInput]} placeholder="0.00" placeholderTextColor={C.textMuted} keyboardType="numeric" value={form.amount} onChangeText={(v) => set('amount', v)} />
 
       <Text style={styles.label}>Account</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
-        {accounts.map((a) => (
+      {(() => {
+        const isFamily = (family?.members?.length ?? 0) > 1;
+        const memberMap = Object.fromEntries((family?.members || []).map((m) => [m.user_id, getMemberName(m, user)]));
+        const myAccs = accounts.filter((a) => !a.user_id || a.user_id === user?.id);
+        const othersAccs = accounts.filter((a) => a.user_id && a.user_id !== user?.id);
+        const renderChip = (a) => (
           <TouchableOpacity key={a.id} style={[styles.chip, form.account_id === a.id && styles.chipActive]} onPress={() => set('account_id', a.id)}>
             <View style={styles.accountChipContent}>
               <BankLogo name={a.name} size={18} style={styles.accountChipLogo} />
               <Text style={[styles.chipText, form.account_id === a.id && styles.chipTextActive]}>{a.name}</Text>
             </View>
           </TouchableOpacity>
-        ))}
-      </ScrollView>
+        );
+        return (
+          <View>
+            {isFamily && myAccs.length > 0 && <Text style={styles.groupLabel}>MY ACCOUNTS</Text>}
+            <View style={styles.chipGrid}>{myAccs.map(renderChip)}</View>
+            {othersAccs.length > 0 && (
+              <>
+                <Text style={styles.groupLabel}>FAMILY ACCOUNTS</Text>
+                <View style={styles.chipGrid}>{othersAccs.map(renderChip)}</View>
+              </>
+            )}
+          </View>
+        );
+      })()}
 
       <Text style={styles.label}>Category</Text>
       {filteredCategories.length === 0 ? (
@@ -209,6 +223,7 @@ const makeStyles = (C) => StyleSheet.create({
   amountInput: { fontSize: FONTS.sizes.xxl, fontWeight: '700', textAlign: 'center', paddingVertical: SPACING.md },
   noteInput: { height: 80, textAlignVertical: 'top' },
   chipScroll: { flexGrow: 0, marginBottom: 4 },
+  groupLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '700', letterSpacing: 1.5, marginTop: SPACING.sm, marginBottom: 6 },
   chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: SPACING.md, paddingVertical: 8, borderRadius: RADIUS.full, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.surfaceHigh, marginRight: 8, marginBottom: 4 },
   chipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
