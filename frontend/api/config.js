@@ -1,9 +1,10 @@
 import axios from 'axios';
 import { supabase } from './supabase';
 
-// Set by start.ps1 via frontend/.env — do not edit manually
+// Local: set by start.ps1 via frontend/.env
+// Railway: falls back to production backend URL
 export const BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
+  process.env.EXPO_PUBLIC_API_URL || 'https://nestworthsvc-production.up.railway.app';
 
 
 
@@ -40,7 +41,10 @@ apiClient.interceptors.request.use(
 
 apiClient.interceptors.response.use(
   (response) => response.data,
-  (error) => {
+  async (error) => {
+    if (error.response?.status === 401) {
+      await supabase.auth.signOut();
+    }
     const message =
       error.response?.data?.detail || error.message || 'Unknown error';
     return Promise.reject(new Error(message));
