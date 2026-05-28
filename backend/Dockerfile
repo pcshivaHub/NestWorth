@@ -1,4 +1,3 @@
-# build: 2026-05-28
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -6,6 +5,7 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN echo "cache-bust-v3"
 COPY backend/ .
 
 CMD uvicorn main:app --host 0.0.0.0 --port $PORT
