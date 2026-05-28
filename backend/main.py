@@ -1,4 +1,3 @@
-import re
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -357,10 +356,6 @@ def summary(
     ctx: Tuple[Session, str] = Depends(get_ctx),
 ):
     db, user_id = ctx
-    if (period not in ("week", "month", "year")
-            and not re.match(r'^\d{4}-\d{2}$', period)
-            and not re.match(r'^\d{4}$', period)):
-        raise HTTPException(status_code=400, detail="period must be 'week', 'month', 'year', 'YYYY-MM', or 'YYYY'")
     return crud.get_summary(db, user_id, period=period)
 
 
