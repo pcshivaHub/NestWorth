@@ -3,7 +3,7 @@ import string
 from calendar import monthrange
 from collections import defaultdict
 from sqlalchemy.orm import Session
-from models import Account, Transaction, Category, Family, FamilyMember, Asset, AssetValueHistory, Outstanding, DepositDetail, Transfer
+from models import Account, Transaction, Category, Family, FamilyMember, Asset, AssetValueHistory, Outstanding, DepositDetail, Transfer, MonthlyBalance
 from schemas import AccountCreate, CategoryCreate, TransactionCreate
 from uuid import UUID
 from datetime import date, timedelta
@@ -553,6 +553,11 @@ def get_summary(db: Session, user_id: str, period: str = "month"):
             return txn_date.toordinal() >= start and txn_date <= today
         if period == "year":
             return txn_date.year == today.year
+        if len(period) == 7 and period[4] == '-':
+            y, m = int(period[:4]), int(period[5:])
+            return txn_date.year == y and txn_date.month == m
+        if len(period) == 4 and period.isdigit():
+            return txn_date.year == int(period)
         return txn_date.year == today.year and txn_date.month == today.month
 
     period_txns = [t for t in txns if is_in_period(t.txn_date)]
@@ -1288,3 +1293,140 @@ def get_asset_portfolio(db: Session, user_id: str) -> dict:
         "by_type": sorted(by_type.values(), key=lambda x: -x["total_value"]),
         "assets": items,
     }
+
+
+# ─────────────────────────────────────────
+# MONTHLY BALANCE RECONCILIATION
+# ─────────────────────────────────────────
+
+def _month_range(months: int) -> list:
+    """Return list of (year, month) tuples for the last `months` months, oldest first."""
+    today = date.today()
+    result = []
+    for i in range(months - 1, -1, -1):
+        m = today.month - i
+        y = today.year
+        while m <= 0:
+            m += 12
+            y -= 1
+        result.append((y, m))
+    return result
+
+
+def get_monthly_balances(db: Session, account_id: UUID, user_id: str, months: int = 12):
+    account = get_account(db, account_id, user_id)
+    if not account:
+        return None
+
+    month_keys = _month_range(months)
+
+    records = db.query(MonthlyBalance).filter(MonthlyBalance.account_id == account_id).all()
+    record_map = {(r.year, r.month): r for r in records}
+
+    txns = db.query(Transaction).filter(Transaction.account_id == account_id).all()
+    monthly_income: dict = defaultdict(float)
+    monthly_expense: dict = defaultdict(float)
+    for t in txns:
+        key = (t.txn_date.year, t.txn_date.month)
+        if t.type == "income":
+            monthly_income[key] += float(t.amount)
+        else:
+            monthly_expense[key] += float(t.amount)
+
+    rows = []
+    prev_actual_closing = None
+
+    for (y, m) in month_keys:
+        rec = record_map.get((y, m))
+        is_draft = rec is None
+
+        if rec is not None:
+            ob = float(rec.opening_balance) if rec.opening_balance is not None else None
+            manual_adj = float(rec.manual_adj or 0)
+            note = rec.note
+        else:
+            ob = prev_actual_closing   # auto-fill from previous month's actual closing
+            manual_adj = 0.0
+            note = None
+
+        income = round(monthly_income.get((y, m), 0.0), 2)
+        expenses = round(monthly_expense.get((y, m), 0.0), 2)
+
+        if ob is not None:
+            computed_closing = round(ob + income - expenses, 2)
+            actual_closing = round(computed_closing + manual_adj, 2)
+        else:
+            computed_closing = None
+            actual_closing = None
+
+        rows.append({
+            "year": y, "month": m,
+            "label": date(y, m, 1).strftime("%b '%y"),
+            "opening_balance": ob,
+            "income": income,
+            "expenses": expenses,
+            "computed_closing": computed_closing,
+            "manual_adj": manual_adj,
+            "actual_closing": actual_closing,
+            "note": note,
+            "is_draft": is_draft,
+        })
+        prev_actual_closing = actual_closing
+
+    return rows
+
+
+def upsert_monthly_balance(db: Session, account_id: UUID, data, user_id: str):
+    account = get_account(db, account_id, user_id)
+    if not account:
+        raise ValueError("Account not found")
+    if account.type != "savings":
+        raise ValueError("Monthly balances are only available for savings accounts")
+
+    existing = db.query(MonthlyBalance).filter(
+        MonthlyBalance.account_id == account_id,
+        MonthlyBalance.year == data.year,
+        MonthlyBalance.month == data.month,
+    ).first()
+
+    if existing:
+        existing.opening_balance = data.opening_balance
+        existing.manual_adj = data.manual_adj
+        existing.note = data.note
+    else:
+        db.add(MonthlyBalance(
+            account_id=account_id,
+            year=data.year,
+            month=data.month,
+            opening_balance=data.opening_balance,
+            manual_adj=data.manual_adj,
+            note=data.note,
+        ))
+
+    db.commit()
+
+
+def get_reconciliation_report(db: Session, user_id: str, months: int = 6):
+    member_ids = [UUID(uid) for uid in get_family_member_ids(db, user_id)]
+    savings_accounts = (
+        db.query(Account)
+        .filter(Account.user_id.in_(member_ids), Account.type == "savings")
+        .all()
+    )
+
+    family = get_family_for_user(db, user_id)
+    member_name_map = {str(m.user_id): (m.display_name or "") for m in family.members} if family else {}
+
+    mine, family_entries = [], []
+    for acc in savings_accounts:
+        rows = get_monthly_balances(db, acc.id, user_id, months) or []
+        entry = {
+            "account_id": str(acc.id),
+            "account_name": acc.name,
+            "owner_name": member_name_map.get(str(acc.user_id)),
+            "is_mine": str(acc.user_id) == user_id,
+            "rows": rows,
+        }
+        (mine if str(acc.user_id) == user_id else family_entries).append(entry)
+
+    return {"mine": mine, "family": family_entries}

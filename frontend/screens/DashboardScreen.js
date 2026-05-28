@@ -17,11 +17,22 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
 import BankLogo from '../components/BankLogo';
 
-const BREAKUP_PERIODS = [
-  { key: 'week', label: 'This Week' },
-  { key: 'month', label: 'This Month' },
-  { key: 'year', label: 'This Year' },
-];
+const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const getMonthPeriods = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-indexed, current month
+  const months = Array.from({ length: month + 1 }, (_, i) => ({
+    key: `${year}-${String(i + 1).padStart(2, '0')}`,
+    label: MONTH_LABELS[i],
+  })).reverse(); // latest first
+  months.push({ key: String(year - 1), label: 'Last Year' });
+  return months;
+};
+
+const BREAKUP_PERIODS = getMonthPeriods();
+const CURRENT_MONTH_KEY = BREAKUP_PERIODS[0].key;
 
 function CategoryBreakup({ title, items = [], color, navigation, txnType }) {
   const { colors: C } = useTheme();
@@ -117,7 +128,7 @@ export default function DashboardScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
-  const [breakupPeriod, setBreakupPeriod] = useState('month');
+  const [breakupPeriod, setBreakupPeriod] = useState(CURRENT_MONTH_KEY);
   const [txFilter, setTxFilter] = useState('mine');
 
   const load = useCallback(async () => {
@@ -153,7 +164,7 @@ export default function DashboardScreen({ navigation }) {
   const filteredTx = (txFilter === 'mine'
     ? recentTx.filter((tx) => tx.user_id === user?.id)
     : recentTx
-  ).slice(0, 5);
+  ).slice(0, 10);
 
   const ENTITY_THEME = {
     netBalance: { color: C.netBalance, label: 'Net Balance' },
@@ -271,7 +282,7 @@ export default function DashboardScreen({ navigation }) {
           })()}
 
           <View style={styles.breakupDivider} />
-          <View style={styles.periodRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.periodRow} contentContainerStyle={styles.periodRowContent}>
             {BREAKUP_PERIODS.map((period) => (
               <TouchableOpacity
                 key={period.key}
@@ -283,43 +294,23 @@ export default function DashboardScreen({ navigation }) {
                 </Text>
               </TouchableOpacity>
             ))}
-          </View>
+          </ScrollView>
 
           <CategoryBreakup
-            title={`INCOME BY CATEGORY — ${BREAKUP_PERIODS.find((p) => p.key === breakupPeriod)?.label.toUpperCase()}`}
+            title={`INCOME BY CATEGORY — ${(BREAKUP_PERIODS.find((p) => p.key === breakupPeriod)?.label || breakupPeriod).toUpperCase()}`}
             items={summary.income_by_category || []}
             color={ENTITY_THEME.income.color}
             navigation={navigation}
             txnType="income"
           />
           <CategoryBreakup
-            title={`EXPENSES BY CATEGORY — ${BREAKUP_PERIODS.find((p) => p.key === breakupPeriod)?.label.toUpperCase()}`}
+            title={`EXPENSES BY CATEGORY — ${(BREAKUP_PERIODS.find((p) => p.key === breakupPeriod)?.label || breakupPeriod).toUpperCase()}`}
             items={summary.expense_by_category || []}
             color={ENTITY_THEME.expense.color}
             navigation={navigation}
             txnType="expense"
           />
         </Card>
-      )}
-
-      {Platform.OS === 'web' ? (
-        <View style={styles.quickActions}>
-          {[
-            { label: 'Transactions', Icon: Receipt, tab: 'Transactions' },
-            { label: 'Accounts', Icon: Bank, tab: 'Accounts' },
-            { label: 'Categories', Icon: Tag, tab: 'Categories' },
-          ].map((action) => (
-            <TouchableOpacity key={action.tab} style={styles.actionBtn} onPress={() => navigation.navigate(action.tab)}>
-              <action.Icon size={24} color={C.textSecondary} style={styles.actionIcon} />
-              <Text style={styles.actionLabel}>{action.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      ) : (
-        <TouchableOpacity style={styles.addTxnBtn} onPress={() => navigation.navigate('AddTransaction')}>
-          <Ionicons name="add-circle-outline" size={20} color="#fff" />
-          <Text style={styles.addTxnLabel}>Add Transaction</Text>
-        </TouchableOpacity>
       )}
 
       <View style={styles.sectionHeader}>
@@ -406,8 +397,9 @@ const makeStyles = (C) => StyleSheet.create({
   statDivider: { width: 1, backgroundColor: C.border, marginHorizontal: SPACING.md },
   breakupDivider: { height: 1, backgroundColor: C.border, marginVertical: SPACING.md },
 
-  periodRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm },
-  periodChip: { flex: 1, alignItems: 'center', paddingVertical: 7, borderRadius: RADIUS.full, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
+  periodRow: { flexGrow: 0, marginBottom: SPACING.sm },
+  periodRowContent: { flexDirection: 'row', gap: SPACING.sm },
+  periodChip: { paddingHorizontal: SPACING.md, paddingVertical: 7, borderRadius: RADIUS.full, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
   periodChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
   periodChipText: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '500' },
   periodChipTextActive: { color: C.primaryLight, fontWeight: '700' },

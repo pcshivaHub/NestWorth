@@ -13,8 +13,10 @@ import Card from '../components/Card';
 import apiClient from '../api/config';
 import BankLogo from '../components/BankLogo';
 import TypeIcon from '../components/TypeIcon';
-import { getAccountBalanceHistory, getAccounts, getDepositDetail, closeDeposit } from '../api/accounts';
+import { getAccountBalanceHistory, getAccounts, getDepositDetail, closeDeposit, getMonthlyBalances, upsertMonthlyBalance } from '../api/accounts';
 import { getTransactions } from '../api/transactions';
+import LoadingSpinner from '../components/LoadingSpinner';
+import ErrorBanner from '../components/ErrorBanner';
 
 const ACCOUNT_TYPES = ['savings', 'checking', 'cash', 'credit', 'fd', 'rd'];
 const DEPOSIT_TYPES = ['fd', 'rd'];
@@ -52,6 +54,17 @@ export default function AccountDetailScreen({ route, navigation }) {
   const [txnPeriod, setTxnPeriod] = useState('month');
   const [txnLoading, setTxnLoading] = useState(false);
 
+  // Monthly statement (SB accounts only)
+  const [monthlyExpanded, setMonthlyExpanded] = useState(false);
+  const [monthlyMonths, setMonthlyMonths] = useState(6);
+  const [monthlyRows, setMonthlyRows] = useState([]);
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
+  const [monthlyError, setMonthlyError] = useState(null);
+  const [entryModal, setEntryModal] = useState(false);
+  const [selectedRow, setSelectedRow] = useState(null);
+  const [entryForm, setEntryForm] = useState({ opening_balance: '', manual_adj: '', note: '' });
+  const [entrySaving, setEntrySaving] = useState(false);
+
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
     try {
@@ -80,6 +93,54 @@ export default function AccountDetailScreen({ route, navigation }) {
   }, [account.id]);
 
   useEffect(() => { loadTxns(); }, [loadTxns]);
+
+  const loadMonthly = useCallback(async () => {
+    if (account.type !== 'savings') return;
+    setMonthlyLoading(true);
+    setMonthlyError(null);
+    try {
+      const data = await getMonthlyBalances(account.id, monthlyMonths);
+      setMonthlyRows(data.rows || []);
+    } catch (e) {
+      setMonthlyError(e.message);
+    } finally {
+      setMonthlyLoading(false);
+    }
+  }, [account.id, account.type, monthlyMonths]);
+
+  useEffect(() => {
+    if (monthlyExpanded) loadMonthly();
+  }, [monthlyExpanded, loadMonthly]);
+
+  const openEntryModal = (row) => {
+    setSelectedRow(row);
+    setEntryForm({
+      opening_balance: row.opening_balance != null ? String(row.opening_balance) : '',
+      manual_adj: row.manual_adj !== 0 ? String(row.manual_adj) : '',
+      note: row.note || '',
+    });
+    setEntryModal(true);
+  };
+
+  const handleSaveMonthly = async () => {
+    if (!selectedRow) return;
+    setEntrySaving(true);
+    try {
+      await upsertMonthlyBalance(account.id, {
+        year: selectedRow.year,
+        month: selectedRow.month,
+        opening_balance: entryForm.opening_balance !== '' ? parseFloat(entryForm.opening_balance) : null,
+        manual_adj: parseFloat(entryForm.manual_adj) || 0,
+        note: entryForm.note.trim() || null,
+      });
+      setEntryModal(false);
+      await loadMonthly();
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setEntrySaving(false);
+    }
+  };
 
   useEffect(() => {
     if (!isDeposit) return;
@@ -392,6 +453,75 @@ export default function AccountDetailScreen({ route, navigation }) {
         </View>
       </Card>
 
+      {/* Monthly statement — SB accounts only */}
+      {account.type === 'savings' && (() => {
+        const today = new Date();
+        return (
+          <Card style={styles.monthlyCard}>
+            <TouchableOpacity style={styles.monthlyHeader} onPress={() => setMonthlyExpanded(!monthlyExpanded)}>
+              <Text style={styles.monthlySectionLabel}>MONTHLY STATEMENT</Text>
+              <Text style={styles.monthlyChevron}>{monthlyExpanded ? '▲' : '▼'}</Text>
+            </TouchableOpacity>
+
+            {monthlyExpanded && (
+              <>
+                <View style={styles.monthlyPeriodRow}>
+                  {[{ key: 6, label: '6M' }, { key: 12, label: '1Y' }].map((o) => (
+                    <TouchableOpacity
+                      key={o.key}
+                      style={[styles.periodChip, monthlyMonths === o.key && styles.periodChipActive]}
+                      onPress={() => setMonthlyMonths(o.key)}
+                    >
+                      <Text style={[styles.periodChipText, monthlyMonths === o.key && styles.periodChipTextActive]}>{o.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {monthlyLoading && <LoadingSpinner />}
+                {monthlyError && <ErrorBanner message={monthlyError} onRetry={loadMonthly} />}
+
+                {!monthlyLoading && !monthlyError && monthlyRows.map((row) => {
+                  const isCurrent = row.year === today.getFullYear() && row.month === (today.getMonth() + 1);
+                  return (
+                    <TouchableOpacity
+                      key={`${row.year}-${row.month}`}
+                      style={[styles.monthRow, row.is_draft && styles.monthRowDraft]}
+                      onPress={() => openEntryModal(row)}
+                    >
+                      <View style={styles.monthRowLeft}>
+                        <View style={styles.monthLabelRow}>
+                          <Text style={[styles.monthLabel, row.is_draft && { color: C.textMuted }]}>{row.label}</Text>
+                          {isCurrent && <View style={styles.inProgressBadge}><Text style={styles.inProgressText}>IN PROGRESS</Text></View>}
+                        </View>
+                        {row.is_draft && row.opening_balance == null && (
+                          <Text style={styles.draftHint}>Tap to set OB</Text>
+                        )}
+                      </View>
+                      <View style={styles.monthRowRight}>
+                        <Text style={[styles.monthOB, row.is_draft && { color: C.textMuted }]}>
+                          {row.opening_balance != null ? formatCurrency(row.opening_balance) : '—'}
+                        </Text>
+                        <Text style={styles.monthArrow}> → </Text>
+                        <Text style={[styles.monthActual, { color: row.actual_closing != null ? C.income : C.textMuted }]}>
+                          {row.actual_closing != null ? formatCurrency(row.actual_closing) : '—'}
+                        </Text>
+                        {row.manual_adj !== 0 && (
+                          <View style={styles.adjBadge}>
+                            <Text style={styles.adjBadgeText}>
+                              {row.manual_adj > 0 ? '+' : ''}{formatCurrency(row.manual_adj)}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </>
+            )}
+          </Card>
+        );
+      })()}
+
       <Button title="✏️  Edit Account" onPress={() => setEditModal(true)} style={styles.editBtn} />
       <Button title={deleting ? 'Deleting...' : '🗑️  Delete Account'} variant="outline" onPress={handleDelete} loading={deleting} style={styles.deleteBtn} />
 
@@ -493,6 +623,80 @@ export default function AccountDetailScreen({ route, navigation }) {
           </ScrollView>
         </View>
       </Modal>
+
+      {/* Monthly entry modal */}
+      <Modal visible={entryModal} animationType="slide" transparent>
+        <View style={styles.overlay}>
+          <ScrollView contentContainerStyle={styles.modal} keyboardShouldPersistTaps="handled">
+            <Text style={styles.modalTitle}>{selectedRow?.label} — Statement</Text>
+
+            <Text style={styles.label}>Opening Balance ₹</Text>
+            <TextInput
+              style={styles.input} keyboardType="numeric" placeholderTextColor={C.textMuted}
+              placeholder="e.g. 48600"
+              value={entryForm.opening_balance}
+              onChangeText={(v) => setEntryForm({ ...entryForm, opening_balance: v })}
+            />
+
+            {(() => {
+              const ob = entryForm.opening_balance !== '' ? parseFloat(entryForm.opening_balance) || 0 : null;
+              const adj = parseFloat(entryForm.manual_adj) || 0;
+              const computed = ob != null ? ob + (selectedRow?.income || 0) - (selectedRow?.expenses || 0) : null;
+              const actual = computed != null ? computed + adj : null;
+              return (
+                <>
+                  <View style={styles.roRow}>
+                    <Text style={styles.roLabel}>Income</Text>
+                    <Text style={[styles.roValue, { color: C.income }]}>{formatCurrency(selectedRow?.income || 0)}</Text>
+                  </View>
+                  <View style={styles.roRow}>
+                    <Text style={styles.roLabel}>Expenses</Text>
+                    <Text style={[styles.roValue, { color: C.expense }]}>{formatCurrency(selectedRow?.expenses || 0)}</Text>
+                  </View>
+                  <View style={styles.roRow}>
+                    <Text style={styles.roLabel}>Computed Closing</Text>
+                    <Text style={styles.roValue}>{computed != null ? formatCurrency(computed) : '—'}</Text>
+                  </View>
+                </>
+              );
+            })()}
+
+            <Text style={styles.label}>Manual Adjustment ₹</Text>
+            <TextInput
+              style={styles.input} keyboardType="numeric" placeholderTextColor={C.textMuted}
+              placeholder="0 (optional)"
+              value={entryForm.manual_adj}
+              onChangeText={(v) => setEntryForm({ ...entryForm, manual_adj: v })}
+            />
+
+            {(() => {
+              const ob = entryForm.opening_balance !== '' ? parseFloat(entryForm.opening_balance) || 0 : null;
+              const adj = parseFloat(entryForm.manual_adj) || 0;
+              const computed = ob != null ? ob + (selectedRow?.income || 0) - (selectedRow?.expenses || 0) : null;
+              const actual = computed != null ? computed + adj : null;
+              return actual != null ? (
+                <View style={[styles.roRow, styles.roRowActual]}>
+                  <Text style={[styles.roLabel, { fontWeight: '700' }]}>Actual Closing</Text>
+                  <Text style={[styles.roValue, { fontWeight: '800', color: actual >= 0 ? C.income : C.expense }]}>{formatCurrency(actual)}</Text>
+                </View>
+              ) : null;
+            })()}
+
+            <Text style={styles.label}>Note</Text>
+            <TextInput
+              style={[styles.input, { minHeight: 60 }]} multiline placeholderTextColor={C.textMuted}
+              placeholder="Optional note"
+              value={entryForm.note}
+              onChangeText={(v) => setEntryForm({ ...entryForm, note: v })}
+            />
+
+            <View style={styles.modalBtns}>
+              <Button title="Cancel" variant="outline" onPress={() => setEntryModal(false)} style={styles.halfBtn} />
+              <Button title="Save" onPress={handleSaveMonthly} loading={entrySaving} style={styles.halfBtn} />
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -581,4 +785,31 @@ const makeStyles = (C) => StyleSheet.create({
   accountOptionActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
   accountOptionText: { color: C.textSecondary, fontSize: FONTS.sizes.sm, fontWeight: '600' },
   noAccountsText: { color: C.textMuted, fontSize: FONTS.sizes.sm, fontStyle: 'italic', marginTop: SPACING.xs },
+
+  // Monthly statement
+  monthlyCard: { marginBottom: SPACING.md, padding: SPACING.md },
+  monthlyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  monthlySectionLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, letterSpacing: 2, fontWeight: '600' },
+  monthlyChevron: { color: C.textMuted, fontSize: FONTS.sizes.sm },
+  monthlyPeriodRow: { flexDirection: 'row', gap: SPACING.xs, marginTop: SPACING.sm, marginBottom: SPACING.xs },
+  monthRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
+  monthRowDraft: { opacity: 0.6 },
+  monthRowLeft: { flex: 1 },
+  monthLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  monthLabel: { color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600' },
+  inProgressBadge: { backgroundColor: C.primary + '33', borderRadius: RADIUS.full, paddingHorizontal: 6, paddingVertical: 1 },
+  inProgressText: { color: C.primaryLight, fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
+  draftHint: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 1 },
+  monthRowRight: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
+  monthOB: { color: C.textSecondary, fontSize: FONTS.sizes.xs },
+  monthArrow: { color: C.textMuted, fontSize: FONTS.sizes.xs },
+  monthActual: { fontSize: FONTS.sizes.sm, fontWeight: '700' },
+  adjBadge: { backgroundColor: C.primary + '22', borderRadius: RADIUS.full, paddingHorizontal: 5, paddingVertical: 1, marginLeft: 4 },
+  adjBadgeText: { color: C.primaryLight, fontSize: 9, fontWeight: '700' },
+
+  // Monthly entry modal read-only rows
+  roRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
+  roRowActual: { marginTop: SPACING.sm, borderBottomWidth: 0 },
+  roLabel: { color: C.textMuted, fontSize: FONTS.sizes.sm },
+  roValue: { color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600' },
 });

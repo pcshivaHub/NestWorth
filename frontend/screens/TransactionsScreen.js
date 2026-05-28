@@ -48,6 +48,7 @@ export default function TransactionsScreen({ navigation, route }) {
   const [periodFilter, setPeriodFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState(null);
   const [accountFilter, setAccountFilter] = useState(null);
+  const [memberFilter, setMemberFilter] = useState(null);
   const [lastAccountId, setLastAccountId] = useState(null);
   const [lastCategoryId, setLastCategoryId] = useState(null);
 
@@ -85,11 +86,14 @@ export default function TransactionsScreen({ navigation, route }) {
   useFocusEffect(useCallback(() => { load(); }, []));
   const onRefresh = () => { setRefreshing(true); load(); };
 
+  const isFamily = (family?.members?.length || 0) > 1;
+
   const filtered = allTransactions.filter((tx) => {
     if (typeFilter !== 'all' && tx.type !== typeFilter) return false;
     if (!isInPeriod(tx.txn_date, periodFilter)) return false;
     if (categoryFilter && tx.category_id !== categoryFilter) return false;
     if (accountFilter && tx.account_id !== accountFilter) return false;
+    if (memberFilter && String(tx.user_id) !== memberFilter) return false;
     return true;
   });
 
@@ -202,11 +206,37 @@ export default function TransactionsScreen({ navigation, route }) {
               </ScrollView>
             )}
 
+            {isFamily && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catScroll}>
+                <TouchableOpacity
+                  style={[styles.catChip, memberFilter === null && styles.catChipActive]}
+                  onPress={() => setMemberFilter(null)}
+                >
+                  <Text style={[styles.catChipText, memberFilter === null && styles.catChipTextActive]}>All Members</Text>
+                </TouchableOpacity>
+                {(family?.members || []).map((m) => {
+                  const mid = String(m.user_id);
+                  return (
+                    <TouchableOpacity
+                      key={mid}
+                      style={[styles.catChip, memberFilter === mid && styles.catChipActive]}
+                      onPress={() => setMemberFilter(memberFilter === mid ? null : mid)}
+                    >
+                      <Text style={[styles.catChipText, memberFilter === mid && styles.catChipTextActive]}>
+                        {getMemberName(m, user)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+
             <Text style={styles.countLabel}>
               {filtered.length} transaction{filtered.length !== 1 ? 's' : ''}
               {periodFilter !== 'all' ? ` · ${periodFilter === 'week' ? 'This Week' : 'This Month'}` : ''}
               {accountFilter ? ` · ${accounts.find(a => a.id === accountFilter)?.name}` : ''}
               {categoryFilter ? ` · ${categories.find(c => c.id === categoryFilter)?.name}` : ''}
+              {memberFilter ? ` · ${memberMap[memberFilter] || 'Member'}` : ''}
             </Text>
           </>
         }
@@ -223,8 +253,8 @@ export default function TransactionsScreen({ navigation, route }) {
                     <BankLogo name={item.account_name} size={18} style={styles.txBankLogo} />
                     <Text style={styles.txMeta}>{item.account_name} · {formatDate(item.txn_date)}</Text>
                   </View>
-                  {item.user_id && item.user_id !== user?.id && (
-                    <Text style={styles.txOwner}>by {memberMap[item.user_id] || 'Family Member'}</Text>
+                  {isFamily && item.user_id && (
+                    <Text style={styles.txOwner}>by {memberMap[String(item.user_id)] || 'Member'}</Text>
                   )}
                   {item.note ? <Text style={styles.txNote} numberOfLines={1}>📝 {item.note}</Text> : null}
                 </View>

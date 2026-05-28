@@ -7,11 +7,11 @@ import { ArrowUp, ArrowDown } from 'phosphor-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAccounts } from '../api/accounts';
 import { getCategories } from '../api/categories';
-import { createTransaction } from '../api/transactions';
+import { createTransaction, getTransactions } from '../api/transactions';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
-import { getMemberName } from '../utils/helpers';
+import { getMemberName, formatCurrency, formatDate } from '../utils/helpers';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
 import BankLogo from '../components/BankLogo';
@@ -37,6 +37,8 @@ export default function AddTransactionScreen({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
+  const [allRecentList, setAllRecentList] = useState([]);
+  const [recentTab, setRecentTab] = useState('mine');
 
   const [lastCatId, setLastCatId] = useState(null);
 
@@ -44,6 +46,13 @@ export default function AddTransactionScreen({ navigation }) {
     account_id: null, category_id: null, amount: '',
     type: 'expense', txn_date: new Date().toISOString().split('T')[0], note: '',
   });
+
+  const loadRecent = async () => {
+    try {
+      const list = await getTransactions();
+      setAllRecentList(list || []);
+    } catch {}
+  };
 
   useEffect(() => {
     const loadDropdowns = async () => {
@@ -58,7 +67,6 @@ export default function AddTransactionScreen({ navigation }) {
         const storedCatId = savedCatId || null;
         const storedType = savedType || 'expense';
 
-        // My accounts: savings/checking/credit; others: savings/checking only
         const allAccs = (accs || []).filter((a) =>
           ['savings', 'checking', 'credit'].includes(a.type)
         );
@@ -67,7 +75,6 @@ export default function AddTransactionScreen({ navigation }) {
         setCategories(cats || []);
         setLastCatId(storedCatId);
 
-        // Pre-select last-used if valid; otherwise default to first account
         const validAcc = storedAccId && sorted.find((a) => a.id === storedAccId);
         const validCat = storedCatId && (cats || []).find((c) => c.id === storedCatId && c.kind === storedType);
         setForm((prev) => ({
@@ -83,6 +90,7 @@ export default function AddTransactionScreen({ navigation }) {
       }
     };
     loadDropdowns();
+    loadRecent();
   }, [user?.id]);
 
   const filteredCategories = useMemo(() => {
@@ -90,6 +98,7 @@ export default function AddTransactionScreen({ navigation }) {
     if (!lastCatId) return cats;
     return [...cats.filter((c) => c.id === lastCatId), ...cats.filter((c) => c.id !== lastCatId)];
   }, [categories, form.type, lastCatId]);
+
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
   const handleSubmit = async () => {
@@ -111,6 +120,7 @@ export default function AddTransactionScreen({ navigation }) {
       setForm((prev) => ({ ...prev, amount: '', note: '' }));
       setSuccessMsg('Transaction saved!');
       setTimeout(() => setSuccessMsg(null), 2500);
+      loadRecent();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -121,98 +131,178 @@ export default function AddTransactionScreen({ navigation }) {
   if (loadingData) return <LoadingSpinner />;
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <View style={styles.screen}>
+      <View style={styles.splitRow}>
 
-      <Text style={styles.label}>Transaction Type</Text>
-      <View style={styles.typeToggle}>
-        {['expense', 'income'].map((t) => (
-          <TouchableOpacity
-            key={t}
-            style={[styles.typeBtn, form.type === t && { borderColor: t === 'income' ? C.income : C.expense, backgroundColor: t === 'income' ? C.incomeSubtle : C.expenseSubtle }]}
-            onPress={() => { set('type', t); set('category_id', null); }}
-          >
-            <View style={styles.typeBtnContent}>
-              {t === 'income'
-                ? <ArrowUp size={16} color={form.type === t ? C.income : C.textMuted} weight="bold" />
-                : <ArrowDown size={16} color={form.type === t ? C.expense : C.textMuted} weight="bold" />}
-              <Text style={[styles.typeBtnText, form.type === t && { color: t === 'income' ? C.income : C.expense }]}>
-                {t === 'income' ? 'Income' : 'Expense'}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        ))}
-      </View>
+        {/* Left 2/3 — add transaction form */}
+        <View style={styles.leftPane}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
 
-      <Text style={styles.label}>Amount (₹)</Text>
-      <TextInput style={[styles.input, styles.amountInput]} placeholder="0.00" placeholderTextColor={C.textMuted} keyboardType="numeric" value={form.amount} onChangeText={(v) => set('amount', v)} />
-
-      <Text style={styles.label}>Account</Text>
-      {(() => {
-        const isFamily = (family?.members?.length ?? 0) > 1;
-        const memberMap = Object.fromEntries((family?.members || []).map((m) => [m.user_id, getMemberName(m, user)]));
-        const myAccs = accounts.filter((a) => !a.user_id || a.user_id === user?.id);
-        const othersAccs = accounts.filter((a) => a.user_id && a.user_id !== user?.id);
-        const renderChip = (a) => (
-          <TouchableOpacity key={a.id} style={[styles.chip, form.account_id === a.id && styles.chipActive]} onPress={() => set('account_id', a.id)}>
-            <View style={styles.accountChipContent}>
-              <BankLogo name={a.name} size={18} style={styles.accountChipLogo} />
-              <Text style={[styles.chipText, form.account_id === a.id && styles.chipTextActive]}>{a.name}</Text>
-            </View>
-          </TouchableOpacity>
-        );
-        return (
-          <View>
-            {isFamily && myAccs.length > 0 && <Text style={styles.groupLabel}>MY ACCOUNTS</Text>}
-            <View style={styles.chipGrid}>{myAccs.map(renderChip)}</View>
-            {othersAccs.length > 0 && (
-              <>
-                <Text style={styles.groupLabel}>FAMILY ACCOUNTS</Text>
-                <View style={styles.chipGrid}>{othersAccs.map(renderChip)}</View>
-              </>
-            )}
+          <Text style={styles.label}>Transaction Type</Text>
+          <View style={styles.typeToggle}>
+            {['expense', 'income'].map((t) => (
+              <TouchableOpacity
+                key={t}
+                style={[styles.typeBtn, form.type === t && { borderColor: t === 'income' ? C.income : C.expense, backgroundColor: t === 'income' ? C.incomeSubtle : C.expenseSubtle }]}
+                onPress={() => { set('type', t); set('category_id', null); }}
+              >
+                <View style={styles.typeBtnContent}>
+                  {t === 'income'
+                    ? <ArrowUp size={16} color={form.type === t ? C.income : C.textMuted} weight="bold" />
+                    : <ArrowDown size={16} color={form.type === t ? C.expense : C.textMuted} weight="bold" />}
+                  <Text style={[styles.typeBtnText, form.type === t && { color: t === 'income' ? C.income : C.expense }]}>
+                    {t === 'income' ? 'Income' : 'Expense'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))}
           </View>
-        );
-      })()}
 
-      <Text style={styles.label}>Category</Text>
-      {filteredCategories.length === 0 ? (
-        <Text style={styles.noData}>No {form.type} categories found. Add one first.</Text>
-      ) : (
-        <View style={styles.chipGrid}>
-          {filteredCategories.map((c) => (
-            <TouchableOpacity key={c.id} style={[styles.chip, form.category_id === c.id && styles.chipActive]} onPress={() => set('category_id', c.id)}>
-              <Text style={[styles.chipText, form.category_id === c.id && styles.chipTextActive]}>{c.name}</Text>
-            </TouchableOpacity>
-          ))}
+          <Text style={styles.label}>Amount (₹)</Text>
+          <TextInput style={[styles.input, styles.amountInput]} placeholder="0.00" placeholderTextColor={C.textMuted} keyboardType="numeric" value={form.amount} onChangeText={(v) => set('amount', v)} />
+
+          <Text style={styles.label}>Account</Text>
+          {(() => {
+            const isFamily = (family?.members?.length ?? 0) > 1;
+            const myAccs = accounts.filter((a) => !a.user_id || a.user_id === user?.id);
+            const othersAccs = accounts.filter((a) => a.user_id && a.user_id !== user?.id);
+            const renderChip = (a) => (
+              <TouchableOpacity key={a.id} style={[styles.chip, form.account_id === a.id && styles.chipActive]} onPress={() => set('account_id', a.id)}>
+                <View style={styles.accountChipContent}>
+                  <BankLogo name={a.name} size={18} style={styles.accountChipLogo} />
+                  <Text style={[styles.chipText, form.account_id === a.id && styles.chipTextActive]}>{a.name}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+            return (
+              <View>
+                {isFamily && myAccs.length > 0 && <Text style={styles.groupLabel}>MY ACCOUNTS</Text>}
+                <View style={styles.chipGrid}>{myAccs.map(renderChip)}</View>
+                {othersAccs.length > 0 && (
+                  <>
+                    <Text style={styles.groupLabel}>FAMILY ACCOUNTS</Text>
+                    <View style={styles.chipGrid}>{othersAccs.map(renderChip)}</View>
+                  </>
+                )}
+              </View>
+            );
+          })()}
+
+          <Text style={styles.label}>Category</Text>
+          {filteredCategories.length === 0 ? (
+            <Text style={styles.noData}>No {form.type} categories found. Add one first.</Text>
+          ) : (
+            <View style={styles.chipGrid}>
+              {filteredCategories.map((c) => (
+                <TouchableOpacity key={c.id} style={[styles.chip, form.category_id === c.id && styles.chipActive]} onPress={() => set('category_id', c.id)}>
+                  <Text style={[styles.chipText, form.category_id === c.id && styles.chipTextActive]}>{c.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          <Text style={styles.label}>Date</Text>
+          <TextInput style={styles.input} placeholder="YYYY-MM-DD" placeholderTextColor={C.textMuted} value={form.txn_date} onChangeText={(v) => set('txn_date', v)} maxLength={10} />
+
+          <Text style={styles.label}>Note (optional)</Text>
+          <TextInput style={[styles.input, styles.noteInput]} placeholder="Add a note..." placeholderTextColor={C.textMuted} multiline value={form.note} onChangeText={(v) => set('note', v)} />
+
+          {successMsg && (
+            <View style={styles.successBox}>
+              <Text style={styles.successText}>✓ {successMsg}</Text>
+            </View>
+          )}
+
+          {error && (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>⚠️ {error}</Text>
+            </View>
+          )}
+
+          <Button title={saving ? 'Saving...' : 'Add Transaction'} onPress={handleSubmit} loading={saving} style={styles.submitBtn} />
+        </ScrollView>
         </View>
-      )}
 
-      <Text style={styles.label}>Date</Text>
-      <TextInput style={styles.input} placeholder="YYYY-MM-DD" placeholderTextColor={C.textMuted} value={form.txn_date} onChangeText={(v) => set('txn_date', v)} maxLength={10} />
+        {/* Right 1/3 — recent transactions (no scroll) */}
+        {(() => {
+          const displayedRecent = recentTab === 'mine'
+            ? allRecentList.filter((tx) => String(tx.user_id) === String(user?.id)).slice(0, 15)
+            : allRecentList.slice(0, 15);
+          return (
+            <View style={styles.rightPane}>
+              <View style={styles.recentHeader}>
+                <View style={styles.recentTabs}>
+                  {[{ key: 'mine', label: 'My Recent' }, { key: 'all', label: 'All Recent' }].map((tab) => (
+                    <TouchableOpacity
+                      key={tab.key}
+                      style={[styles.recentTab, recentTab === tab.key && styles.recentTabActive]}
+                      onPress={() => setRecentTab(tab.key)}
+                    >
+                      <Text style={[styles.recentTabText, recentTab === tab.key && styles.recentTabTextActive]}>
+                        {tab.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+              {displayedRecent.length === 0
+                ? <Text style={styles.recentEmpty}>No entries yet.</Text>
+                : displayedRecent.map((item) => (
+                  <View key={item.id} style={styles.miniRow}>
+                    <View style={[styles.miniDot, { backgroundColor: item.type === 'income' ? C.income : C.expense }]} />
+                    <View style={styles.miniInfo}>
+                      <Text style={styles.miniCategory} numberOfLines={1}>{item.category_name || '—'}</Text>
+                      <Text style={styles.miniMeta} numberOfLines={1}>{formatDate(item.txn_date)}</Text>
+                    </View>
+                    <Text style={[styles.miniAmount, { color: item.type === 'income' ? C.income : C.expense }]}>
+                      {item.type === 'income' ? '+' : '-'}{formatCurrency(item.amount)}
+                    </Text>
+                  </View>
+                ))
+              }
+            </View>
+          );
+        })()}
 
-      <Text style={styles.label}>Note (optional)</Text>
-      <TextInput style={[styles.input, styles.noteInput]} placeholder="Add a note..." placeholderTextColor={C.textMuted} multiline value={form.note} onChangeText={(v) => set('note', v)} />
-
-      {successMsg && (
-        <View style={styles.successBox}>
-          <Text style={styles.successText}>✓ {successMsg}</Text>
-        </View>
-      )}
-
-      {error && (
-        <View style={styles.errorBox}>
-          <Text style={styles.errorText}>⚠️ {error}</Text>
-        </View>
-      )}
-
-      <Button title={saving ? 'Saving...' : 'Add Transaction'} onPress={handleSubmit} loading={saving} style={styles.submitBtn} />
-    </ScrollView>
+      </View>
+    </View>
   );
 }
 
 const makeStyles = (C) => StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
+
+  splitRow: { flex: 1, flexDirection: 'row' },
+  leftPane: { flex: 2 },
   content: { padding: SPACING.md, paddingBottom: SPACING.xl },
+  rightPane: {
+    flex: 1,
+    borderLeftWidth: 1,
+    borderLeftColor: C.border,
+    backgroundColor: C.surface,
+  },
+
+  recentHeader: {
+    paddingHorizontal: SPACING.sm,
+    paddingTop: SPACING.sm,
+    paddingBottom: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: C.border,
+  },
+  recentTabs: { flexDirection: 'row', gap: SPACING.xs },
+  recentTab: { flex: 1, alignItems: 'center', paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
+  recentTabActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
+  recentTabText: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '600' },
+  recentTabTextActive: { color: C.primaryLight, fontWeight: '700' },
+  recentEmpty: { color: C.textMuted, fontSize: FONTS.sizes.sm, textAlign: 'center', paddingTop: SPACING.md },
+
+  miniRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 5, paddingHorizontal: SPACING.sm, gap: 6 },
+  miniDot: { width: 8, height: 8, borderRadius: 4, marginTop: 5, flexShrink: 0 },
+  miniInfo: { flex: 1 },
+  miniCategory: { color: C.textPrimary, fontSize: FONTS.sizes.md, fontWeight: '600' },
+  miniMeta: { color: C.textMuted, fontSize: FONTS.sizes.sm, marginTop: 1 },
+  miniAmount: { fontSize: FONTS.sizes.md, fontWeight: '700', flexShrink: 0 },
+
   label: { color: C.textSecondary, fontSize: FONTS.sizes.sm, marginBottom: 8, marginTop: SPACING.md, fontWeight: '500' },
   typeToggle: { flexDirection: 'row', gap: SPACING.sm },
   typeBtn: { flex: 1, paddingVertical: SPACING.sm + 2, borderRadius: RADIUS.md, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.surfaceHigh, alignItems: 'center' },
@@ -221,7 +311,6 @@ const makeStyles = (C) => StyleSheet.create({
   input: { backgroundColor: C.surface, borderRadius: RADIUS.md, borderWidth: 1, borderColor: C.border, color: C.textPrimary, padding: SPACING.sm + 4, fontSize: FONTS.sizes.md },
   amountInput: { fontSize: FONTS.sizes.xxl, fontWeight: '700', textAlign: 'center', paddingVertical: SPACING.md },
   noteInput: { height: 80, textAlignVertical: 'top' },
-  chipScroll: { flexGrow: 0, marginBottom: 4 },
   groupLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '700', letterSpacing: 1.5, marginTop: SPACING.sm, marginBottom: 6 },
   chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: SPACING.md, paddingVertical: 8, borderRadius: RADIUS.full, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.surfaceHigh, marginRight: 8, marginBottom: 4 },
@@ -232,7 +321,7 @@ const makeStyles = (C) => StyleSheet.create({
   chipTextActive: { color: C.primaryLight, fontWeight: '600' },
   noData: { color: C.textMuted, fontSize: FONTS.sizes.sm, fontStyle: 'italic', paddingVertical: SPACING.sm },
   submitBtn: { marginTop: SPACING.xl },
-  successBox: { backgroundColor: C.incomeBg || C.incomeSubtle, borderWidth: 1, borderColor: C.income, borderRadius: RADIUS.md, padding: SPACING.sm + 4, marginTop: SPACING.md },
+  successBox: { backgroundColor: C.incomeSubtle, borderWidth: 1, borderColor: C.income, borderRadius: RADIUS.md, padding: SPACING.sm + 4, marginTop: SPACING.md },
   successText: { color: C.income, fontSize: FONTS.sizes.sm, fontWeight: '600' },
   errorBox: { backgroundColor: C.expenseBg, borderWidth: 1, borderColor: C.expense, borderRadius: RADIUS.md, padding: SPACING.sm + 4, marginTop: SPACING.md },
   errorText: { color: C.expense, fontSize: FONTS.sizes.sm },

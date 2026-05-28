@@ -293,7 +293,7 @@ function TabNavigator() {
         contentStyle: { backgroundColor: C.bg },
         headerTitle: () => <AppHeaderTitle user={user} section={route.name} />,
         headerLeft: () => <HamburgerMenu navigation={navigation} />,
-        headerRight: () => <HeaderRight />,
+        headerRight: () => Platform.OS === 'web' ? <HeaderRight /> : null,
         tabBarIcon: ({ focused }) => {
           const Icon = TAB_ICONS[route.name];
           if (!Icon) return null;

@@ -26,3 +26,12 @@ export const updateTransfer = (transferId, data) => apiClient.put(`/transfers/${
 export const getAccountTransfers = (accountId) =>
   apiClient.get(`/accounts/${accountId}/transfers`);
 export const deleteTransfer = (transferId) => apiClient.delete(`/transfers/${transferId}`);
+
+export const getMonthlyBalances = (accountId, months = 12) =>
+  apiClient.get(`/accounts/${accountId}/monthly-balances`, { params: { months } });
+
+export const upsertMonthlyBalance = (accountId, data) =>
+  apiClient.post(`/accounts/${accountId}/monthly-balances`, data);
+
+export const getReconciliationReport = (months = 6) =>
+  apiClient.get('/reports/reconciliation', { params: { months } });

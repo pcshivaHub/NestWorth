@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, Dimensions,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, Dimensions, Modal, TextInput,
 } from 'react-native';
 import { BarChart, PieChart, LineChart } from 'react-native-gifted-charts';
 import {
@@ -8,11 +8,13 @@ import {
   getNetWorthTrend, getNetWorthSnapshot, getFamilyBreakdown,
   getAssetPortfolio, getExpenseCategoryTrends, getCCReport,
 } from '../api/reports';
+import { getMonthlyBalances, upsertMonthlyBalance, getReconciliationReport } from '../api/accounts';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency, getMemberName } from '../utils/helpers';
 import Card from '../components/Card';
+import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
 import EmptyState from '../components/EmptyState';
@@ -41,6 +43,8 @@ const SUB_TABS = [
   { key: 'assets',         label: 'Assets' },
   { key: 'networth',       label: 'Net Worth' },
   { key: 'family',         label: 'Family' },
+  { key: '__sb',           label: 'SB ACCOUNTS',    isHeader: true },
+  { key: 'reconciliation', label: 'Reconciliation' },
 ];
 
 const PERIOD_OPTIONS = [
@@ -52,6 +56,12 @@ const PERIOD_OPTIONS = [
 const MONTHS_OPTIONS = [
   { key: 6,  label: '6 Months' },
   { key: 12, label: '12 Months' },
+];
+
+const RECON_MONTHS_OPTIONS = [
+  { key: 3,  label: '3M' },
+  { key: 6,  label: '6M' },
+  { key: 12, label: '1Y' },
 ];
 
 // ─── Shared small components ───────────────────────────
@@ -701,6 +711,203 @@ function CreditCardReport({ period, C, styles }) {
   );
 }
 
+// ─── ReconciliationReport ──────────────────────────────
+
+function AccountReconCard({ entry, C, styles, onRowPress }) {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <View style={styles.reconCard}>
+      <TouchableOpacity style={styles.reconCardHeader} onPress={() => setExpanded(!expanded)}>
+        <BankLogo name={entry.account_name} size={22} style={{ marginRight: 8 }} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.reconAccountName}>{entry.account_name}</Text>
+          {!entry.is_mine && entry.owner_name ? (
+            <Text style={styles.reconOwnerName}>{entry.owner_name}</Text>
+          ) : null}
+        </View>
+        <Text style={styles.monthlyChevron}>{expanded ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
+
+      {expanded && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: SPACING.xs }}>
+          <View>
+            <View style={styles.reconTableRow}>
+              {['Month', 'OB', 'Income', 'Expenses', 'Comp.Closing', 'Adj', 'Actual'].map((h) => (
+                <Text key={h} style={[styles.reconCell, styles.reconHeaderCell]}>{h}</Text>
+              ))}
+            </View>
+            {entry.rows.map((row) => {
+              const today = new Date();
+              const isCurrent = row.year === today.getFullYear() && row.month === (today.getMonth() + 1);
+              return (
+                <TouchableOpacity
+                  key={`${row.year}-${row.month}`}
+                  style={[styles.reconTableRow, row.is_draft && { opacity: 0.55 }]}
+                  onPress={() => onRowPress(entry.account_id, row)}
+                >
+                  <View style={[styles.reconCell, { flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
+                    <Text style={[styles.reconCellText, isCurrent && { color: C.primaryLight }]}>{row.label}</Text>
+                    {isCurrent && <View style={styles.inProgressBadge}><Text style={styles.inProgressText}>•</Text></View>}
+                  </View>
+                  <Text style={styles.reconCell}>{row.opening_balance != null ? formatCurrency(row.opening_balance) : '—'}</Text>
+                  <Text style={[styles.reconCell, { color: C.income }]}>{formatCurrency(row.income)}</Text>
+                  <Text style={[styles.reconCell, { color: C.expense }]}>{formatCurrency(row.expenses)}</Text>
+                  <Text style={styles.reconCell}>{row.computed_closing != null ? formatCurrency(row.computed_closing) : '—'}</Text>
+                  <Text style={[styles.reconCell, row.manual_adj !== 0 && { color: C.primaryLight, fontWeight: '700' }]}>
+                    {row.manual_adj !== 0 ? `${row.manual_adj > 0 ? '+' : ''}${formatCurrency(row.manual_adj)}` : '—'}
+                  </Text>
+                  <Text style={[styles.reconCell, row.actual_closing != null && { fontWeight: '700' }]}>
+                    {row.actual_closing != null ? formatCurrency(row.actual_closing) : '—'}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+function ReconciliationReport({ months, C, styles }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [editModal, setEditModal] = useState(false);
+  const [editAccountId, setEditAccountId] = useState(null);
+  const [selectedRow, setSelectedRow] = useState(null);
+  const [entryForm, setEntryForm] = useState({ opening_balance: '', manual_adj: '', note: '' });
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    try { setError(null); setLoading(true); setData(await getReconciliationReport(months)); }
+    catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [months]);
+  useEffect(() => { load(); }, [load]);
+
+  const openEdit = (accountId, row) => {
+    setEditAccountId(accountId);
+    setSelectedRow(row);
+    setEntryForm({
+      opening_balance: row.opening_balance != null ? String(row.opening_balance) : '',
+      manual_adj: row.manual_adj !== 0 ? String(row.manual_adj) : '',
+      note: row.note || '',
+    });
+    setEditModal(true);
+  };
+
+  const handleSave = async () => {
+    if (!selectedRow || !editAccountId) return;
+    setSaving(true);
+    try {
+      await upsertMonthlyBalance(editAccountId, {
+        year: selectedRow.year,
+        month: selectedRow.month,
+        opening_balance: entryForm.opening_balance !== '' ? parseFloat(entryForm.opening_balance) : null,
+        manual_adj: parseFloat(entryForm.manual_adj) || 0,
+        note: entryForm.note.trim() || null,
+      });
+      setEditModal(false);
+      await load();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <LoadingSpinner />;
+  if (error) return <ErrorBanner message={error} onRetry={load} />;
+  if (!data) return null;
+
+  const hasData = data.mine.length > 0 || data.family.length > 0;
+  if (!hasData) return (
+    <EmptyState message="No savings accounts found in your family." />
+  );
+
+  const ob = entryForm.opening_balance !== '' ? parseFloat(entryForm.opening_balance) || 0 : null;
+  const adj = parseFloat(entryForm.manual_adj) || 0;
+  const computed = ob != null ? ob + (selectedRow?.income || 0) - (selectedRow?.expenses || 0) : null;
+  const actual = computed != null ? computed + adj : null;
+
+  return (
+    <View>
+      {data.mine.length > 0 && (
+        <>
+          <Text style={styles.reconSectionHeader}>MY ACCOUNTS</Text>
+          {data.mine.map((e) => (
+            <AccountReconCard key={e.account_id} entry={e} C={C} styles={styles} onRowPress={openEdit} />
+          ))}
+        </>
+      )}
+      {data.family.length > 0 && (
+        <>
+          <Text style={styles.reconSectionHeader}>FAMILY ACCOUNTS</Text>
+          {data.family.map((e) => (
+            <AccountReconCard key={e.account_id} entry={e} C={C} styles={styles} onRowPress={openEdit} />
+          ))}
+        </>
+      )}
+
+      {/* Inline edit modal */}
+      <Modal visible={editModal} animationType="slide" transparent>
+        <View style={styles.reconOverlay}>
+          <ScrollView contentContainerStyle={styles.reconModal} keyboardShouldPersistTaps="handled">
+            <Text style={styles.reconModalTitle}>{selectedRow?.label} — Statement</Text>
+
+            <Text style={styles.reconModalLabel}>Opening Balance ₹</Text>
+            <TextInput
+              style={styles.reconModalInput} keyboardType="numeric" placeholderTextColor={C.textMuted}
+              placeholder="e.g. 48600" value={entryForm.opening_balance}
+              onChangeText={(v) => setEntryForm({ ...entryForm, opening_balance: v })}
+            />
+
+            <View style={styles.reconRoRow}>
+              <Text style={styles.reconRoLabel}>Income</Text>
+              <Text style={[styles.reconRoValue, { color: C.income }]}>{formatCurrency(selectedRow?.income || 0)}</Text>
+            </View>
+            <View style={styles.reconRoRow}>
+              <Text style={styles.reconRoLabel}>Expenses</Text>
+              <Text style={[styles.reconRoValue, { color: C.expense }]}>{formatCurrency(selectedRow?.expenses || 0)}</Text>
+            </View>
+            <View style={styles.reconRoRow}>
+              <Text style={styles.reconRoLabel}>Computed Closing</Text>
+              <Text style={styles.reconRoValue}>{computed != null ? formatCurrency(computed) : '—'}</Text>
+            </View>
+
+            <Text style={styles.reconModalLabel}>Manual Adjustment ₹</Text>
+            <TextInput
+              style={styles.reconModalInput} keyboardType="numeric" placeholderTextColor={C.textMuted}
+              placeholder="0" value={entryForm.manual_adj}
+              onChangeText={(v) => setEntryForm({ ...entryForm, manual_adj: v })}
+            />
+
+            {actual != null && (
+              <View style={[styles.reconRoRow, { borderBottomWidth: 0, marginTop: SPACING.xs }]}>
+                <Text style={[styles.reconRoLabel, { fontWeight: '700' }]}>Actual Closing</Text>
+                <Text style={[styles.reconRoValue, { fontWeight: '800', color: actual >= 0 ? C.income : C.expense }]}>{formatCurrency(actual)}</Text>
+              </View>
+            )}
+
+            <Text style={styles.reconModalLabel}>Note</Text>
+            <TextInput
+              style={[styles.reconModalInput, { minHeight: 56 }]} multiline placeholderTextColor={C.textMuted}
+              placeholder="Optional" value={entryForm.note}
+              onChangeText={(v) => setEntryForm({ ...entryForm, note: v })}
+            />
+
+            <View style={styles.reconModalBtns}>
+              <Button title="Cancel" variant="outline" onPress={() => setEditModal(false)} style={{ flex: 1 }} />
+              <Button title="Save" onPress={handleSave} loading={saving} style={{ flex: 1 }} />
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
 // ─── ReportsScreen ─────────────────────────────────────
 
 export default function ReportsScreen() {
@@ -710,9 +917,11 @@ export default function ReportsScreen() {
   const [activeTab, setActiveTab] = useState('trend');
   const [period, setPeriod] = useState('month');
   const [months, setMonths] = useState(6);
+  const [reconMonths, setReconMonths] = useState(6);
 
   const showPeriod = ['categories', 'budget', 'family', 'cc'].includes(activeTab);
   const showMonths = ['trend', 'networth', 'expense_trends'].includes(activeTab);
+  const showReconMonths = activeTab === 'reconciliation';
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -768,21 +977,36 @@ export default function ReportsScreen() {
         </View>
       )}
 
+      {showReconMonths && (
+        <View style={styles.selectorRow}>
+          {RECON_MONTHS_OPTIONS.map((m) => (
+            <TouchableOpacity
+              key={m.key}
+              style={[styles.selectorChip, reconMonths === m.key && styles.selectorChipActive]}
+              onPress={() => setReconMonths(m.key)}
+            >
+              <Text style={[styles.selectorText, reconMonths === m.key && styles.selectorTextActive]}>{m.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
       <Card style={styles.reportCard}>
-        {activeTab === 'trend'          && <TrendReport months={months} C={C} styles={styles} />}
-        {activeTab === 'categories'     && <CategoryReport period={period} C={C} styles={styles} />}
-        {activeTab === 'expense_trends' && <ExpenseTrendsReport months={months} C={C} styles={styles} />}
-        {activeTab === 'budget'         && <BudgetReport period={period} C={C} styles={styles} />}
-        {activeTab === 'assets'         && <AssetPortfolioReport C={C} styles={styles} />}
-        {activeTab === 'networth'       && (
+        {activeTab === 'trend'           && <TrendReport months={months} C={C} styles={styles} />}
+        {activeTab === 'categories'      && <CategoryReport period={period} C={C} styles={styles} />}
+        {activeTab === 'expense_trends'  && <ExpenseTrendsReport months={months} C={C} styles={styles} />}
+        {activeTab === 'budget'          && <BudgetReport period={period} C={C} styles={styles} />}
+        {activeTab === 'assets'          && <AssetPortfolioReport C={C} styles={styles} />}
+        {activeTab === 'networth'        && (
           <>
             <NetWorthSnapshotCard C={C} styles={styles} />
             <View style={styles.snapshotDivider} />
             <NetWorthReport months={months} C={C} styles={styles} />
           </>
         )}
-        {activeTab === 'family'         && <FamilyReport period={period} C={C} styles={styles} />}
-        {activeTab === 'cc'             && <CreditCardReport period={period} C={C} styles={styles} />}
+        {activeTab === 'family'          && <FamilyReport period={period} C={C} styles={styles} />}
+        {activeTab === 'cc'              && <CreditCardReport period={period} C={C} styles={styles} />}
+        {activeTab === 'reconciliation'  && <ReconciliationReport months={reconMonths} C={C} styles={styles} />}
       </Card>
     </ScrollView>
   );
@@ -902,4 +1126,29 @@ const makeStyles = (C) => StyleSheet.create({
   ccTxCategory: { color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600' },
   ccTxMeta: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 2 },
   ccTxAmt: { fontSize: FONTS.sizes.sm, fontWeight: '700' },
+
+  // Reconciliation
+  reconSectionHeader: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '700', letterSpacing: 1, marginTop: SPACING.md, marginBottom: SPACING.xs },
+  reconCard: { backgroundColor: C.surfaceHigh, borderRadius: RADIUS.md, borderWidth: 1, borderColor: C.border, padding: SPACING.sm, marginBottom: SPACING.sm },
+  reconCardHeader: { flexDirection: 'row', alignItems: 'center' },
+  reconAccountName: { color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '700' },
+  reconOwnerName: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 1 },
+  monthlyChevron: { color: C.textMuted, fontSize: FONTS.sizes.sm },
+  reconTableRow: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
+  reconCell: { width: 90, paddingVertical: 6, paddingHorizontal: 4, color: C.textPrimary, fontSize: FONTS.sizes.xs },
+  reconCellText: { color: C.textPrimary, fontSize: FONTS.sizes.xs },
+  reconHeaderCell: { color: C.textMuted, fontWeight: '700', fontSize: 10 },
+  inProgressBadge: { backgroundColor: C.primary + '33', borderRadius: RADIUS.full, paddingHorizontal: 4, paddingVertical: 1 },
+  inProgressText: { color: C.primaryLight, fontSize: 9, fontWeight: '700' },
+
+  // Reconciliation edit modal
+  reconOverlay: { flex: 1, backgroundColor: '#000000AA', justifyContent: 'flex-end' },
+  reconModal: { backgroundColor: C.surface, borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl, padding: SPACING.lg, paddingBottom: SPACING.xl, borderTopWidth: 1, borderColor: C.border },
+  reconModalTitle: { color: C.textPrimary, fontSize: FONTS.sizes.xl, fontWeight: '700', marginBottom: SPACING.md },
+  reconModalLabel: { color: C.textSecondary, fontSize: FONTS.sizes.sm, marginBottom: 6, marginTop: SPACING.sm },
+  reconModalInput: { backgroundColor: C.surfaceHigh, borderRadius: RADIUS.md, borderWidth: 1, borderColor: C.border, color: C.textPrimary, padding: SPACING.sm + 4, fontSize: FONTS.sizes.md },
+  reconModalBtns: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.lg },
+  reconRoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
+  reconRoLabel: { color: C.textMuted, fontSize: FONTS.sizes.sm },
+  reconRoValue: { color: C.textPrimary, fontSize: FONTS.sizes.sm, fontWeight: '600' },
 });

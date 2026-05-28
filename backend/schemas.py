@@ -432,3 +432,48 @@ class CategoryTrendItem(BaseModel):
 class ExpenseCategoryTrendsResponse(BaseModel):
     month_labels: List[str]
     categories: List[CategoryTrendItem]
+
+
+# ─────────────────────────────────────────
+# MONTHLY BALANCE RECONCILIATION
+# ─────────────────────────────────────────
+
+class MonthlyBalanceUpsert(BaseModel):
+    year: int
+    month: int
+    opening_balance: Optional[float] = None
+    manual_adj: float = 0.0
+    note: Optional[str] = None
+
+
+class MonthlyBalanceRow(BaseModel):
+    year: int
+    month: int
+    label: str
+    opening_balance: Optional[float] = None
+    income: float
+    expenses: float
+    computed_closing: Optional[float] = None
+    manual_adj: float
+    actual_closing: Optional[float] = None
+    note: Optional[str] = None
+    is_draft: bool
+
+
+class MonthlyBalanceListResponse(BaseModel):
+    account_id: str
+    account_name: str
+    rows: List[MonthlyBalanceRow]
+
+
+class ReconciliationAccountEntry(BaseModel):
+    account_id: str
+    account_name: str
+    owner_name: Optional[str] = None
+    is_mine: bool
+    rows: List[MonthlyBalanceRow]
+
+
+class ReconciliationReportResponse(BaseModel):
+    mine: List[ReconciliationAccountEntry]
+    family: List[ReconciliationAccountEntry]

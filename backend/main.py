@@ -19,6 +19,8 @@ from schemas import (
     OutstandingCreate, OutstandingResponse, OutstandingsSummary,
     NetWorthSnapshotResponse, ExpenseCategoryTrendsResponse,
     TransferCreate, TransferResponse,
+    MonthlyBalanceUpsert, MonthlyBalanceListResponse,
+    ReconciliationReportResponse,
 )
 from auth import get_current_user
 import crud
@@ -354,8 +356,11 @@ def summary(
     ctx: Tuple[Session, str] = Depends(get_ctx),
 ):
     db, user_id = ctx
-    if period not in ("week", "month", "year"):
-        raise HTTPException(status_code=400, detail="period must be 'week', 'month', or 'year'")
+    import re as _re
+    if (period not in ("week", "month", "year")
+            and not _re.match(r'^\d{4}-\d{2}$', period)
+            and not _re.match(r'^\d{4}$', period)):
+        raise HTTPException(status_code=400, detail="period must be 'week', 'month', 'year', 'YYYY-MM', or 'YYYY'")
     return crud.get_summary(db, user_id, period=period)
 
 
@@ -562,3 +567,48 @@ def delete_asset_route(asset_id: UUID, ctx: Tuple[Session, str] = Depends(get_ct
     db, uid = ctx
     crud.delete_asset(db, asset_id, uid)
     return {"message": "Asset deleted"}
+
+
+# ─────────────────────────────────────────
+# MONTHLY BALANCE RECONCILIATION
+# ─────────────────────────────────────────
+
+@app.get("/accounts/{account_id}/monthly-balances", response_model=MonthlyBalanceListResponse)
+def get_monthly_balances(
+    account_id: UUID,
+    months: int = 12,
+    ctx: Tuple[Session, str] = Depends(get_ctx),
+):
+    db, user_id = ctx
+    account = crud.get_account(db, account_id, user_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.type != "savings":
+        raise HTTPException(status_code=400, detail="Monthly balances are only available for savings accounts")
+    rows = crud.get_monthly_balances(db, account_id, user_id, months)
+    return {"account_id": str(account_id), "account_name": account.name, "rows": rows}
+
+
+@app.post("/accounts/{account_id}/monthly-balances", response_model=MonthlyBalanceListResponse)
+def upsert_monthly_balance(
+    account_id: UUID,
+    data: MonthlyBalanceUpsert,
+    ctx: Tuple[Session, str] = Depends(get_ctx),
+):
+    db, user_id = ctx
+    try:
+        crud.upsert_monthly_balance(db, account_id, data, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    account = crud.get_account(db, account_id, user_id)
+    rows = crud.get_monthly_balances(db, account_id, user_id, 12)
+    return {"account_id": str(account_id), "account_name": account.name, "rows": rows}
+
+
+@app.get("/reports/reconciliation", response_model=ReconciliationReportResponse)
+def get_reconciliation_report(
+    months: int = 6,
+    ctx: Tuple[Session, str] = Depends(get_ctx),
+):
+    db, user_id = ctx
+    return crud.get_reconciliation_report(db, user_id, months)

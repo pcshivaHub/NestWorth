@@ -26,6 +26,6 @@ export const getInitials = (name = '') =>
 
 export const getMemberName = (m, user) =>
   m.display_name ||
-  (m.user_id === user?.id
+  (String(m.user_id) === String(user?.id)
     ? (user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email?.split('@')[0] || 'You')
-    : 'Family Member');
+    : 'Member');

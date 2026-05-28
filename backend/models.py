@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Date, Numeric, ForeignKey, Text, DateTime, Boolean, Integer
+from sqlalchemy import Column, String, Date, Numeric, ForeignKey, Text, DateTime, Boolean, Integer, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime, timezone
@@ -150,3 +150,17 @@ class DepositDetail(Base):
     closed_date               = Column(Date, nullable=True)
     transferred_to_account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True)
     created_at                = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class MonthlyBalance(Base):
+    __tablename__ = "monthly_balances"
+
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id      = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    year            = Column(Integer, nullable=False)
+    month           = Column(Integer, nullable=False)   # 1–12
+    opening_balance = Column(Numeric, nullable=True)
+    manual_adj      = Column(Numeric, nullable=False, default=0)
+    note            = Column(Text, nullable=True)
+
+    __table_args__ = (UniqueConstraint('account_id', 'year', 'month', name='uq_monthly_balance'),)
