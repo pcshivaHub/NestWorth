@@ -611,11 +611,11 @@ def get_summary(db: Session, user_id: str, period: str = "month"):
 def _month_slots(months: int) -> list:
     """Return list of (year, month) tuples for last N calendar months, oldest first."""
     today = date.today()
+    base = today.year * 12 + (today.month - 1)
     slots = []
     for i in range(months - 1, -1, -1):
-        m = (today.month - 1 - i) % 12 + 1
-        y = today.year - ((i - (today.month - 1)) // 12 + (1 if (today.month - 1 - i) < 0 else 0))
-        slots.append((y, m))
+        total = base - i
+        slots.append((total // 12, total % 12 + 1))
     return slots
 
 

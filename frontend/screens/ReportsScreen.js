@@ -21,7 +21,7 @@ import EmptyState from '../components/EmptyState';
 import TypeIcon from '../components/TypeIcon';
 import {
   ChartBar, ChartPieSlice, ClipboardText, Briefcase, TrendUp, TrendDown,
-  UsersThree, ArrowUpRight, ArrowDownLeft, CreditCard,
+  UsersThree, ArrowUpRight, ArrowDownLeft, CreditCard, Scales, ArrowsDownUp,
 } from 'phosphor-react-native';
 import BankLogo from '../components/BankLogo';
 import { formatDate } from '../utils/helpers';
@@ -34,17 +34,17 @@ const PALETTE = ['#6C63FF', '#00D9A3', '#FF5C7A', '#FFB74D', '#4DA3FF', '#FF8A65
 // Sub-tabs with isHeader sentinels for section labels
 const SUB_TABS = [
   { key: '__cf',           label: 'CASH FLOW',      isHeader: true },
-  { key: 'trend',          label: 'Trend' },
-  { key: 'categories',     label: 'Categories' },
-  { key: 'expense_trends', label: 'Exp. Trends' },
-  { key: 'budget',         label: 'Budget' },
-  { key: 'cc',             label: 'Credit Cards' },
+  { key: 'trend',          label: 'Trend',          Icon: ChartBar },
+  { key: 'categories',     label: 'Categories',     Icon: ChartPieSlice },
+  { key: 'expense_trends', label: 'Exp. Trends',    Icon: TrendDown },
+  { key: 'budget',         label: 'Budget',         Icon: ClipboardText },
+  { key: 'cc',             label: 'Credit Cards',   Icon: CreditCard },
   { key: '__w',            label: 'WEALTH',         isHeader: true },
-  { key: 'assets',         label: 'Assets' },
-  { key: 'networth',       label: 'Net Worth' },
-  { key: 'family',         label: 'Family' },
+  { key: 'assets',         label: 'Assets',         Icon: Briefcase },
+  { key: 'networth',       label: 'Net Worth',      Icon: Scales },
+  { key: 'family',         label: 'Family',         Icon: UsersThree },
   { key: '__sb',           label: 'SB ACCOUNTS',    isHeader: true },
-  { key: 'reconciliation', label: 'Reconciliation' },
+  { key: 'reconciliation', label: 'Reconciliation', Icon: ArrowsDownUp },
 ];
 
 const PERIOD_OPTIONS = [
@@ -108,6 +108,8 @@ function TrendReport({ months, C, styles }) {
     barData.push({ value: m.expense, frontColor: C.expense, spacing: i < (data.months.length - 1) ? 14 : 2 });
   });
 
+  const hasData = barData.some((d) => d.value > 0);
+
   return (
     <View>
       <View style={styles.statsRow}>
@@ -115,13 +117,15 @@ function TrendReport({ months, C, styles }) {
         {data.best_month && <StatItem label="Best Month" value={`${data.best_month.label} (${formatCurrency(data.best_month.net)})`} color={C.income} styles={styles} />}
         {data.worst_month && <StatItem label="Worst Month" value={`${data.worst_month.label} (${formatCurrency(data.worst_month.net)})`} color={C.expense} styles={styles} />}
       </View>
-      {barData.length > 0
+      {hasData
         ? <BarChart data={barData} barWidth={16} noOfSections={4} isAnimated width={CHART_WIDTH} yAxisTextStyle={{ color: C.textMuted, fontSize: 9 }} xAxisColor={C.border} yAxisColor={C.border} rulesColor={C.border} />
         : <EmptyState icon={<ChartBar size={48} color={C.textMuted} />} message="No transaction data yet." />}
-      <View style={styles.legendWrap}>
-        <LegendDot color={C.income} label="Income" styles={styles} />
-        <LegendDot color={C.expense} label="Expense" styles={styles} />
-      </View>
+      {hasData && (
+        <View style={styles.legendWrap}>
+          <LegendDot color={C.income} label="Income" styles={styles} />
+          <LegendDot color={C.expense} label="Expense" styles={styles} />
+        </View>
+      )}
     </View>
   );
 }
@@ -210,31 +214,39 @@ function BudgetReport({ period, C, styles }) {
           </Text>
         </View>
       )}
-      {data.categories.map((cat) => {
-        const hasBudget = cat.budget != null;
-        const pct = hasBudget ? Math.min((cat.percentage || 0) / 100, 1) : 0;
-        const barColor = pct < 0.6 ? C.income : pct < 0.85 ? C.warning : C.expense;
-        return (
-          <View key={cat.category_id || cat.category_name} style={styles.budgetRow}>
-            <View style={styles.budgetRowTop}>
-              <Text style={styles.budgetCatName} numberOfLines={1}>{cat.category_name}</Text>
-              <Text style={[styles.budgetAmt, { color: C.expense }]}>{formatCurrency(cat.actual)}</Text>
-            </View>
-            {hasBudget ? (
-              <>
-                <View style={styles.budgetTrack}>
-                  <View style={[styles.budgetFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: barColor }]} />
+      {data.categories.reduce((rows, cat, i) => {
+        if (i % 2 === 0) rows.push([]);
+        rows[rows.length - 1].push(cat);
+        return rows;
+      }, []).map((pair, ri) => (
+        <View key={ri} style={styles.budgetPairRow}>
+          {pair.map((cat) => {
+            const hasBudget = cat.budget != null;
+            const pct = hasBudget ? Math.min((cat.percentage || 0) / 100, 1) : 0;
+            const barColor = pct < 0.6 ? C.income : pct < 0.85 ? C.warning : C.expense;
+            return (
+              <View key={cat.category_id || cat.category_name} style={styles.budgetRow}>
+                <View style={styles.budgetRowTop}>
+                  <Text style={styles.budgetCatName} numberOfLines={1}>{cat.category_name}</Text>
+                  <Text style={[styles.budgetAmt, { color: C.expense }]}>{formatCurrency(cat.actual)}</Text>
                 </View>
-                <View style={styles.budgetRowBottom}>
-                  <Text style={[styles.budgetPct, { color: barColor }]}>{Math.round(pct * 100)}%</Text>
-                  <Text style={styles.budgetOf}>of {formatCurrency(cat.budget)}</Text>
-                  {cat.variance > 0 && <Text style={[styles.budgetVariance, { color: C.expense }]}>+{formatCurrency(cat.variance)} over</Text>}
-                </View>
-              </>
-            ) : <Text style={styles.budgetNoBudget}>No budget set</Text>}
-          </View>
-        );
-      })}
+                {hasBudget ? (
+                  <>
+                    <View style={styles.budgetTrack}>
+                      <View style={[styles.budgetFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: barColor }]} />
+                    </View>
+                    <View style={styles.budgetRowBottom}>
+                      <Text style={[styles.budgetPct, { color: barColor }]}>{Math.round(pct * 100)}%</Text>
+                      <Text style={styles.budgetOf}>of {formatCurrency(cat.budget)}</Text>
+                      {cat.variance > 0 && <Text style={[styles.budgetVariance, { color: C.expense }]}>over</Text>}
+                    </View>
+                  </>
+                ) : <Text style={styles.budgetNoBudget}>No budget set</Text>}
+              </View>
+            );
+          })}
+        </View>
+      ))}
     </View>
   );
 }
@@ -454,7 +466,8 @@ function ExpenseTrendsReport({ months, C, styles }) {
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorBanner message={error} onRetry={load} />;
-  if (!data || data.categories.length === 0) return <EmptyState icon={<TrendDown size={48} color={C.textMuted} />} message="No expense data yet." />;
+  const hasExpData = data && data.categories.length > 0 && data.categories.some((c) => c.total > 0);
+  if (!hasExpData) return <EmptyState icon={<TrendDown size={48} color={C.textMuted} />} message="No expense data yet." />;
 
   // Top 5 categories only — keeps chart readable
   const topCats = data.categories.slice(0, 5);
@@ -935,13 +948,16 @@ export default function ReportsScreen() {
               </View>
             );
           }
+          const isActive = activeTab === tab.key;
+          const { Icon } = tab;
           return (
             <TouchableOpacity
               key={tab.key}
-              style={[styles.subTabChip, activeTab === tab.key && styles.subTabChipActive]}
+              style={[styles.subTabChip, isActive && styles.subTabChipActive]}
               onPress={() => setActiveTab(tab.key)}
             >
-              <Text style={[styles.subTabText, activeTab === tab.key && styles.subTabTextActive]}>
+              {Icon && <Icon size={13} color={isActive ? '#fff' : C.textMuted} weight={isActive ? 'fill' : 'regular'} />}
+              <Text style={[styles.subTabText, isActive && styles.subTabTextActive]}>
                 {tab.label}
               </Text>
             </TouchableOpacity>
@@ -1019,27 +1035,30 @@ const makeStyles = (C) => StyleSheet.create({
   subTabScroll: { flexGrow: 0, marginBottom: SPACING.sm },
   sectionLabel: {
     justifyContent: 'center', paddingHorizontal: SPACING.sm,
-    paddingVertical: 8, marginRight: 4,
+    paddingVertical: 8, marginRight: 2,
+    borderRightWidth: 1, borderRightColor: C.border,
   },
   sectionLabelText: {
-    color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '700', letterSpacing: 1,
+    color: C.primaryLight, fontSize: 10, fontWeight: '800', letterSpacing: 1.2,
   },
   subTabChip: {
+    flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: SPACING.md, paddingVertical: 8, borderRadius: RADIUS.full,
-    borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh, marginRight: SPACING.sm,
+    borderWidth: 1.5, borderColor: C.primaryLight + '44',
+    backgroundColor: C.surfaceHigh, marginRight: SPACING.sm, gap: 5,
   },
-  subTabChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
-  subTabText: { color: C.textMuted, fontSize: FONTS.sizes.sm, fontWeight: '500' },
-  subTabTextActive: { color: C.primaryLight, fontWeight: '700' },
+  subTabChipActive: { borderColor: C.primary, backgroundColor: C.primary },
+  subTabText: { color: C.textSecondary, fontSize: FONTS.sizes.sm, fontWeight: '500' },
+  subTabTextActive: { color: '#fff', fontWeight: '700' },
 
   selectorRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm },
   selectorChip: {
     flex: 1, alignItems: 'center', paddingVertical: 7, borderRadius: RADIUS.full,
-    borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh,
+    borderWidth: 1.5, borderColor: C.primaryLight + '44', backgroundColor: C.surfaceHigh,
   },
-  selectorChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
-  selectorText: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '500' },
-  selectorTextActive: { color: C.primaryLight, fontWeight: '700' },
+  selectorChipActive: { borderColor: C.primary, backgroundColor: C.primary },
+  selectorText: { color: C.textSecondary, fontSize: FONTS.sizes.xs, fontWeight: '500' },
+  selectorTextActive: { color: '#fff', fontWeight: '700' },
 
   reportCard: { padding: SPACING.lg },
 
@@ -1061,8 +1080,9 @@ const makeStyles = (C) => StyleSheet.create({
   pieWrap: { alignItems: 'center', marginVertical: SPACING.md },
   pieCenter: { fontSize: FONTS.sizes.sm, fontWeight: '700', textAlign: 'center' },
 
+  budgetPairRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm },
   budgetRow: {
-    marginBottom: SPACING.sm, backgroundColor: C.surfaceHigh,
+    flex: 1, backgroundColor: C.surfaceHigh,
     borderRadius: RADIUS.md, padding: SPACING.sm + 4, borderWidth: 1, borderColor: C.border,
   },
   budgetRowTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },

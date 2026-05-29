@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   View, Text, TextInput, StyleSheet, TouchableOpacity,
-  KeyboardAvoidingView, Platform, ScrollView, Alert, Image,
+  KeyboardAvoidingView, Platform, ScrollView, Image,
 } from 'react-native';
 import { login } from '../api/auth';
 import { FONTS, SPACING, RADIUS } from '../utils/theme';
@@ -16,15 +16,20 @@ export default function LoginScreen({ navigation }) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
+
+  const passwordRef = useRef(null);
 
   const handleLogin = async () => {
-    if (!email.trim()) return Alert.alert('Validation', 'Email is required.');
-    if (!password) return Alert.alert('Validation', 'Password is required.');
+    setError('');
+    if (!email.trim()) return setError('Email is required.');
+    if (!/\S+@\S+\.\S+/.test(email.trim())) return setError('Enter a valid email address.');
+    if (!password) return setError('Password is required.');
     setLoading(true);
     try {
       await login(email.trim().toLowerCase(), password);
     } catch (e) {
-      Alert.alert('Login Failed', e.message);
+      setError(e.message);
     } finally {
       setLoading(false);
     }
@@ -46,6 +51,8 @@ export default function LoginScreen({ navigation }) {
         <View style={styles.form}>
           <Text style={styles.formTitle}>Welcome back</Text>
 
+          {!!error && <Text style={styles.errorBanner}>{error}</Text>}
+
           <Text style={styles.label}>Email</Text>
           <TextInput
             style={styles.input}
@@ -53,19 +60,26 @@ export default function LoginScreen({ navigation }) {
             placeholderTextColor={C.textMuted}
             keyboardType="email-address"
             autoCapitalize="none"
+            autoCorrect={false}
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(t) => { setEmail(t); setError(''); }}
+            returnKeyType="next"
+            onSubmitEditing={() => passwordRef.current?.focus()}
+            blurOnSubmit={false}
           />
 
           <Text style={styles.label}>Password</Text>
           <View style={styles.passwordRow}>
             <TextInput
+              ref={passwordRef}
               style={[styles.input, styles.passwordInput]}
               placeholder="••••••••"
               placeholderTextColor={C.textMuted}
               secureTextEntry={!showPassword}
               value={password}
-              onChangeText={setPassword}
+              onChangeText={(t) => { setPassword(t); setError(''); }}
+              returnKeyType="done"
+              onSubmitEditing={handleLogin}
             />
             <TouchableOpacity style={styles.eyeBtn} onPress={() => setShowPassword(!showPassword)}>
               <Text style={styles.eyeIcon}>{showPassword ? '🙈' : '👁️'}</Text>
@@ -92,6 +106,7 @@ const makeStyles = (C) => StyleSheet.create({
   subtitle: { color: C.textSecondary, fontSize: FONTS.sizes.md, marginTop: 4 },
   form: { backgroundColor: C.surface, borderRadius: RADIUS.xl, padding: SPACING.lg, borderWidth: 1, borderColor: C.border },
   formTitle: { color: C.textPrimary, fontSize: FONTS.sizes.xl, fontWeight: '700', marginBottom: SPACING.md },
+  errorBanner: { color: C.expense, fontSize: FONTS.sizes.sm, backgroundColor: C.expenseSubtle, borderRadius: RADIUS.md, padding: SPACING.sm, marginBottom: SPACING.sm, fontWeight: '500' },
   label: { color: C.textSecondary, fontSize: FONTS.sizes.sm, marginBottom: 6, marginTop: SPACING.sm, fontWeight: '500' },
   input: {
     backgroundColor: C.surfaceHigh, borderRadius: RADIUS.md, borderWidth: 1,

@@ -304,26 +304,6 @@ export default function AccountsScreen({ navigation }) {
         </View>
       )}
 
-      {section === 'accounts' && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.typeFilterRow} contentContainerStyle={styles.typeFilterContent}>
-          {[null, 'savings', 'checking', 'cash', 'credit', 'fd', 'rd', 'mutual_fund', 'equity', 'ppf', 'nps'].map((t) => {
-            const exists = t === null || accounts.some((a) => a.type === t);
-            if (!exists) return null;
-            return (
-              <TouchableOpacity
-                key={String(t)}
-                style={[styles.typeFilterChip, acctTypeFilter === t && styles.typeFilterChipActive]}
-                onPress={() => setAcctTypeFilter(acctTypeFilter === t ? null : t)}
-              >
-                <Text style={[styles.typeFilterChipText, acctTypeFilter === t && styles.typeFilterChipTextActive]}>
-                  {t === null ? 'All Types' : TYPE_LABELS[t] || t}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      )}
-
       <View style={styles.sectionRow}>
         {[
           { key: 'accounts',     label: 'Accounts' },
@@ -342,6 +322,28 @@ export default function AccountsScreen({ navigation }) {
           </TouchableOpacity>
         ))}
       </View>
+
+      {section === 'accounts' && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.typeFilterRow} contentContainerStyle={styles.typeFilterContent}>
+          {[null, 'savings', 'checking', 'cash', 'credit', 'fd', 'rd', 'mutual_fund', 'equity', 'ppf', 'nps'].map((t) => {
+            const exists = t === null || accounts.some((a) => a.type === t);
+            if (!exists) return null;
+            const isActive = acctTypeFilter === t;
+            return (
+              <TouchableOpacity
+                key={String(t)}
+                style={[styles.typeFilterChip, isActive && styles.typeFilterChipActive]}
+                onPress={() => setAcctTypeFilter(acctTypeFilter === t ? null : t)}
+              >
+                {t !== null && <TypeIcon type={t} size={12} color={isActive ? '#fff' : C.textSecondary} />}
+                <Text style={[styles.typeFilterChipText, isActive && styles.typeFilterChipTextActive]}>
+                  {t === null ? 'All' : TYPE_LABELS[t] || t}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
 
       {section === 'accounts' && (
         <FlatList
@@ -882,12 +884,12 @@ const makeStyles = (C) => StyleSheet.create({
   list: { padding: SPACING.md, paddingBottom: 80 },
 
   ownerRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.md, paddingTop: SPACING.sm, paddingBottom: 4 },
-  typeFilterRow: { flexGrow: 0, paddingTop: 4, paddingBottom: 4 },
+  typeFilterRow: { flexGrow: 0, paddingTop: 4, paddingBottom: 8 },
   typeFilterContent: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.md },
-  typeFilterChip: { paddingHorizontal: SPACING.sm + 2, paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
-  typeFilterChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
-  typeFilterChipText: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '500' },
-  typeFilterChipTextActive: { color: C.primaryLight, fontWeight: '700' },
+  typeFilterChip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.md, paddingVertical: 7, borderRadius: RADIUS.full, borderWidth: 1.5, borderColor: C.primaryLight + '55', backgroundColor: C.surfaceHigh },
+  typeFilterChipActive: { borderColor: C.primary, backgroundColor: C.primary },
+  typeFilterChipText: { color: C.textSecondary, fontSize: FONTS.sizes.xs, fontWeight: '600', marginLeft: 4 },
+  typeFilterChipTextActive: { color: '#fff', fontWeight: '700' },
   ownerChip: { paddingHorizontal: SPACING.md, paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
   ownerChipActive: { borderColor: C.primary, backgroundColor: C.primary + '22' },
   ownerChipText: { color: C.textMuted, fontSize: FONTS.sizes.xs, fontWeight: '600' },

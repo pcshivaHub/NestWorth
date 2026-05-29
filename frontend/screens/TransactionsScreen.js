@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View, Text, FlatList, StyleSheet, RefreshControl,
-  TouchableOpacity, ScrollView,
+  TouchableOpacity, ScrollView, TextInput,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -17,7 +17,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
 import EmptyState from '../components/EmptyState';
 import BankLogo from '../components/BankLogo';
-import { Receipt } from 'phosphor-react-native';
+import { Receipt, MagnifyingGlass, ArrowCircleUp, ArrowCircleDown, ListBullets } from 'phosphor-react-native';
 
 const startOfWeek = () => { const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - d.getDay()); return d; };
 const startOfMonth = () => { const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); return d; };
@@ -51,6 +51,7 @@ export default function TransactionsScreen({ navigation, route }) {
   const [memberFilter, setMemberFilter] = useState(null);
   const [lastAccountId, setLastAccountId] = useState(null);
   const [lastCategoryId, setLastCategoryId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const lastNavTs = useRef(0);
   useEffect(() => {
@@ -88,12 +89,20 @@ export default function TransactionsScreen({ navigation, route }) {
 
   const isFamily = (family?.members?.length || 0) > 1;
 
+  const searchLower = searchQuery.trim().toLowerCase();
   const filtered = allTransactions.filter((tx) => {
     if (typeFilter !== 'all' && tx.type !== typeFilter) return false;
     if (!isInPeriod(tx.txn_date, periodFilter)) return false;
     if (categoryFilter && tx.category_id !== categoryFilter) return false;
     if (accountFilter && tx.account_id !== accountFilter) return false;
     if (memberFilter && String(tx.user_id) !== memberFilter) return false;
+    if (searchLower) {
+      const inNote = tx.note?.toLowerCase().includes(searchLower);
+      const inCategory = tx.category_name?.toLowerCase().includes(searchLower);
+      const inAccount = tx.account_name?.toLowerCase().includes(searchLower);
+      const inAmount = String(tx.amount).includes(searchLower);
+      if (!inNote && !inCategory && !inAccount && !inAmount) return false;
+    }
     return true;
   });
 
@@ -111,13 +120,15 @@ export default function TransactionsScreen({ navigation, route }) {
 
   if (loading) return <LoadingSpinner />;
 
-  const typeChipActive = (f) => ({
-    borderColor: f === 'income' ? C.income : f === 'expense' ? C.expense : C.primary,
-    backgroundColor: f === 'income' ? C.incomeSubtle : f === 'expense' ? C.expenseSubtle : C.primary + '22',
-  });
-  const typeChipTextActive = (f) => ({
-    color: f === 'income' ? C.income : f === 'expense' ? C.expense : C.primaryLight,
-  });
+  const typeChipActiveBg = (f) => f === 'income' ? C.income : f === 'expense' ? C.expense : C.primary;
+  const typeChipActive = (f) => ({ borderColor: typeChipActiveBg(f), backgroundColor: typeChipActiveBg(f) });
+  const typeChipTextActive = () => ({ color: '#fff' });
+  const typeChipIconColor = (f) => typeFilter === f ? '#fff' : C.textMuted;
+  const TYPE_CHIPS = [
+    { key: 'all',     label: 'All',     Icon: ListBullets },
+    { key: 'income',  label: 'Income',  Icon: ArrowCircleUp },
+    { key: 'expense', label: 'Expense', Icon: ArrowCircleDown },
+  ];
 
   return (
     <View style={styles.screen}>
@@ -131,15 +142,35 @@ export default function TransactionsScreen({ navigation, route }) {
         ListEmptyComponent={<EmptyState icon={<Receipt size={48} color={C.textMuted} />} message="No transactions found." />}
         ListHeaderComponent={
           <>
+            <View style={[styles.searchRow, searchQuery.length > 0 && { borderColor: C.primary }]}>
+              <MagnifyingGlass size={18} color={searchQuery.length > 0 ? C.primary : C.textMuted} style={{ marginRight: 8 }} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search note, category, account, amount..."
+                placeholderTextColor={C.textMuted}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoCorrect={false}
+                autoCapitalize="none"
+                clearButtonMode="never"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity style={styles.searchClear} onPress={() => setSearchQuery('')}>
+                  <Text style={styles.searchClearText}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
             <View style={styles.typeRow}>
-              {['all', 'income', 'expense'].map((f) => (
+              {TYPE_CHIPS.map(({ key, label, Icon }) => (
                 <TouchableOpacity
-                  key={f}
-                  style={[styles.typeChip, typeFilter === f && typeChipActive(f)]}
-                  onPress={() => { setTypeFilter(f); setCategoryFilter(null); }}
+                  key={key}
+                  style={[styles.typeChip, typeFilter === key && typeChipActive(key)]}
+                  onPress={() => { setTypeFilter(key); setCategoryFilter(null); }}
                 >
-                  <Text style={[styles.typeChipText, typeFilter === f && typeChipTextActive(f)]}>
-                    {f === 'all' ? 'All' : f === 'income' ? '↑ Income' : '↓ Expense'}
+                  <Icon size={15} color={typeChipIconColor(key)} weight={typeFilter === key ? 'fill' : 'regular'} />
+                  <Text style={[styles.typeChipText, typeFilter === key && typeChipTextActive(key)]}>
+                    {' '}{label}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -284,8 +315,12 @@ export default function TransactionsScreen({ navigation, route }) {
 const makeStyles = (C) => StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
   list: { padding: SPACING.md, paddingBottom: 80 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.surfaceHigh, borderRadius: RADIUS.full, borderWidth: 1.5, borderColor: C.border, paddingHorizontal: SPACING.md, paddingVertical: 8, marginBottom: SPACING.sm },
+  searchInput: { flex: 1, color: C.textPrimary, fontSize: FONTS.sizes.sm, padding: 0 },
+  searchClear: { marginLeft: SPACING.sm, padding: 2 },
+  searchClearText: { color: C.textMuted, fontSize: FONTS.sizes.sm },
   typeRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm },
-  typeChip: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: RADIUS.full, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.surfaceHigh },
+  typeChip: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, borderRadius: RADIUS.full, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.surfaceHigh },
   typeChipText: { color: C.textMuted, fontSize: FONTS.sizes.sm, fontWeight: '600' },
   periodRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm },
   periodChip: { flex: 1, alignItems: 'center', paddingVertical: 7, borderRadius: RADIUS.full, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
