@@ -54,6 +54,9 @@ export default function RegisterScreen({ navigation }) {
 
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <TouchableOpacity style={styles.backRow} onPress={() => navigation.navigate('Home')}>
+        <Text style={styles.backLink}>← Home</Text>
+      </TouchableOpacity>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
 
         <View style={styles.header}>
@@ -193,6 +196,12 @@ const makeStyles = (C) => StyleSheet.create({
   strengthLabel: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginLeft: 4 },
   optionalLabel: { color: C.textMuted, fontWeight: '400' },
   inviteHint: { color: C.textMuted, fontSize: FONTS.sizes.xs, marginTop: 4, marginBottom: SPACING.xs },
+  backRow: {
+    paddingHorizontal: SPACING.lg,
+    paddingTop: Platform.OS === 'ios' ? 56 : SPACING.md,
+    paddingBottom: SPACING.xs,
+  },
+  backLink: { color: C.primaryLight, fontSize: FONTS.sizes.sm, fontWeight: '600' },
   submitBtn: { marginTop: SPACING.lg },
   switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: SPACING.md },
   switchText: { color: C.textSecondary, fontSize: FONTS.sizes.sm },

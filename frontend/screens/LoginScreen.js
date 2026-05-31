@@ -37,6 +37,9 @@ export default function LoginScreen({ navigation }) {
 
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <TouchableOpacity style={styles.backRow} onPress={() => navigation.navigate('Home')}>
+        <Text style={styles.backLink}>← Home</Text>
+      </TouchableOpacity>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
 
         <View style={styles.header}>
@@ -116,6 +119,12 @@ const makeStyles = (C) => StyleSheet.create({
   passwordInput: { paddingRight: 50 },
   eyeBtn: { position: 'absolute', right: 12, top: 12 },
   eyeIcon: { fontSize: 18 },
+  backRow: {
+    paddingHorizontal: SPACING.lg,
+    paddingTop: Platform.OS === 'ios' ? 56 : SPACING.md,
+    paddingBottom: SPACING.xs,
+  },
+  backLink: { color: C.primaryLight, fontSize: FONTS.sizes.sm, fontWeight: '600' },
   submitBtn: { marginTop: SPACING.lg },
   switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: SPACING.md },
   switchText: { color: C.textSecondary, fontSize: FONTS.sizes.sm },
